@@ -31,6 +31,16 @@ Open the local URL from Vite, install the Freighter browser extension, switch Fr
 npm run build
 ```
 
+## Publish and deploy
+
+The repo includes a GitHub Pages workflow. After GitHub auth is fixed, publish it with:
+
+```bash
+gh repo create splitwave-stellar-dapp --public --source=. --remote=origin --push
+```
+
+In the GitHub repo settings, set Pages to deploy from GitHub Actions. Every push to `main` will build and deploy the app.
+
 ## Screenshots
 
 Add final screenshots after running the app with Freighter:
