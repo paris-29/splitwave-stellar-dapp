@@ -37,6 +37,8 @@ import coverArt from "./assets/splitwave-cover.svg";
 
 const HORIZON_URL = "https://horizon-testnet.stellar.org";
 const EXPLORER_BASE = "https://stellar.expert/explorer/testnet/tx";
+const FREIGHTER_INSTALL_URL =
+  "https://chromewebstore.google.com/detail/freighter/bcacfldlkkdogcmkkibnjlakofdplcbk";
 const STORAGE_KEY = "splitwave:lastWallet";
 
 type Friend = {
@@ -58,17 +60,6 @@ type Notice = {
   message: string;
   hash?: string;
 };
-
-const initialFriends: Friend[] = [
-  { id: "f-maya", name: "Maya", wallet: "" },
-  { id: "f-zo", name: "Zo", wallet: "" },
-  { id: "f-kai", name: "Kai", wallet: "" },
-];
-
-const initialGroups: SplitGroup[] = [
-  { id: "g-roomies", name: "Roomies", friendIds: ["f-maya", "f-zo"] },
-  { id: "g-weekend", name: "Weekend", friendIds: ["f-maya", "f-kai"] },
-];
 
 const horizon = new Horizon.Server(HORIZON_URL);
 
@@ -145,16 +136,19 @@ function App() {
     type: "idle",
     message: "No transaction yet",
   });
+  const [freighterInstalled, setFreighterInstalled] = useState<boolean | null>(
+    null,
+  );
   const [isWalletBusy, setIsWalletBusy] = useState(false);
   const [isTxBusy, setIsTxBusy] = useState(false);
-  const [friends, setFriends] = useState<Friend[]>(initialFriends);
-  const [groups, setGroups] = useState<SplitGroup[]>(initialGroups);
-  const [activeGroupId, setActiveGroupId] = useState(initialGroups[0].id);
+  const [friends, setFriends] = useState<Friend[]>([]);
+  const [groups, setGroups] = useState<SplitGroup[]>([]);
+  const [activeGroupId, setActiveGroupId] = useState("");
   const [newGroupName, setNewGroupName] = useState("");
   const [newFriendName, setNewFriendName] = useState("");
   const [newFriendWallet, setNewFriendWallet] = useState("");
-  const [billTitle, setBillTitle] = useState("Afterparty dinner");
-  const [billTotal, setBillTotal] = useState("48");
+  const [billTitle, setBillTitle] = useState("");
+  const [billTotal, setBillTotal] = useState("");
   const [payer, setPayer] = useState("friend");
   const [recipientAddress, setRecipientAddress] = useState("");
   const [selectedRecipientId, setSelectedRecipientId] = useState("");
@@ -162,7 +156,7 @@ function App() {
   const [copiedRequestId, setCopiedRequestId] = useState("");
 
   const activeGroup = useMemo(
-    () => groups.find((group) => group.id === activeGroupId) ?? groups[0],
+    () => groups.find((group) => group.id === activeGroupId),
     [activeGroupId, groups],
   );
 
@@ -178,6 +172,8 @@ function App() {
     ? billAmount / participantCount
     : 0;
   const splitShareText = formatXlm(splitShare);
+  const activeGroupName = activeGroup?.name ?? "Create a group";
+  const billName = billTitle.trim() || "New split";
   const connected = Boolean(publicKey);
   const onTestnet = networkName === "TESTNET";
   const prefersReducedMotion = () =>
@@ -226,13 +222,15 @@ function App() {
     setIsWalletBusy(true);
     try {
       const installed = await isConnected();
-      if (!installed.isConnected) {
+      if (installed.error || !installed.isConnected) {
+        setFreighterInstalled(false);
         setWalletNotice({
-          type: "idle",
+          type: "warning",
           message: "Install Freighter to connect a Stellar wallet.",
         });
         return;
       }
+      setFreighterInstalled(true);
 
       const addressResult = await getAddress();
       const remembered = localStorage.getItem(STORAGE_KEY);
@@ -243,9 +241,10 @@ function App() {
         await refreshNetworkAndBalance(address);
       }
     } catch {
+      setFreighterInstalled(false);
       setWalletNotice({
-        type: "idle",
-        message: "Wallet disconnected",
+        type: "warning",
+        message: "Install Freighter to connect a Stellar wallet.",
       });
     } finally {
       setIsWalletBusy(false);
@@ -257,10 +256,15 @@ function App() {
     setWalletNotice({ type: "loading", message: "Waiting for Freighter..." });
     try {
       const installed = await isConnected();
-      if (installed.error) throw new Error(installed.error.message);
-      if (!installed.isConnected) {
-        throw new Error("Freighter extension is not installed.");
+      if (installed.error || !installed.isConnected) {
+        setFreighterInstalled(false);
+        setWalletNotice({
+          type: "warning",
+          message: "Freighter is not installed. Install it, then refresh this page.",
+        });
+        return;
       }
+      setFreighterInstalled(true);
 
       const access = await requestAccess();
       if (access.error) throw new Error(access.error.message);
@@ -324,6 +328,13 @@ function App() {
     const name = newFriendName.trim();
     const wallet = newFriendWallet.trim();
     if (!name) return;
+    if (!activeGroup) {
+      setTransactionNotice({
+        type: "warning",
+        message: "Create a group before adding friends.",
+      });
+      return;
+    }
     if (wallet && !isValidPublicKey(wallet)) {
       setTransactionNotice({
         type: "error",
@@ -382,7 +393,7 @@ function App() {
   }
 
   async function copyRequest(friend: Friend) {
-    const message = `${friend.name} owes ${splitShareText} XLM for ${billTitle} in ${activeGroup.name}.`;
+    const message = `${friend.name} owes ${splitShareText} XLM for ${billName} in ${activeGroupName}.`;
     await navigator.clipboard.writeText(message);
     setCopiedRequestId(friend.id);
     window.setTimeout(() => setCopiedRequestId(""), 1600);
@@ -622,6 +633,16 @@ function App() {
                 <LogOut size={17} />
                 Disconnect
               </button>
+            ) : freighterInstalled === false ? (
+              <a
+                className="icon-text primary"
+                href={FREIGHTER_INSTALL_URL}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <Wallet size={17} />
+                Install Freighter
+              </a>
             ) : (
               <button
                 className="icon-text primary"
@@ -640,7 +661,7 @@ function App() {
             <img src={coverArt} alt="" />
             <div className="visual-copy">
               <p className="eyebrow">Group</p>
-              <h2>{activeGroup?.name}</h2>
+              <h2>{activeGroupName}</h2>
               <p>{participantCount} people splitting {formatXlm(Number(billTotal) || 0)} XLM</p>
             </div>
           </div>
@@ -670,15 +691,27 @@ function App() {
             <StatusNotice notice={walletNotice} />
 
             <div className="wallet-actions">
-              <button
-                className="icon-text secondary"
-                onClick={fundWallet}
-                disabled={!connected || isWalletBusy || !onTestnet}
-              >
-                {isWalletBusy ? <Loader2 className="spin" size={17} /> : <Sparkles size={17} />}
-                Fund testnet
-              </button>
-              {!connected && (
+              {freighterInstalled === false ? (
+                <a
+                  className="icon-text primary"
+                  href={FREIGHTER_INSTALL_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <Wallet size={17} />
+                  Install Freighter
+                </a>
+              ) : (
+                <button
+                  className="icon-text secondary"
+                  onClick={fundWallet}
+                  disabled={!connected || isWalletBusy || !onTestnet}
+                >
+                  {isWalletBusy ? <Loader2 className="spin" size={17} /> : <Sparkles size={17} />}
+                  Fund testnet
+                </button>
+              )}
+              {!connected && freighterInstalled !== false && (
                 <button
                   className="icon-text primary"
                   onClick={connectWallet}
@@ -695,7 +728,7 @@ function App() {
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Split</p>
-                <h2>{billTitle}</h2>
+                <h2>{billName}</h2>
               </div>
               <span className="share-chip">{splitShareText} XLM each</span>
             </div>
@@ -706,6 +739,7 @@ function App() {
                 <input
                   value={billTitle}
                   onChange={(event) => setBillTitle(event.target.value)}
+                  placeholder="Bill name"
                   maxLength={40}
                 />
               </label>
@@ -714,6 +748,7 @@ function App() {
                 <input
                   value={billTotal}
                   onChange={(event) => setBillTotal(event.target.value)}
+                  placeholder="0"
                   inputMode="decimal"
                 />
               </label>
@@ -731,15 +766,19 @@ function App() {
             </div>
 
             <div className="group-tabs" aria-label="Groups">
-              {groups.map((group) => (
-                <button
-                  key={group.id}
-                  className={group.id === activeGroupId ? "group-tab active" : "group-tab"}
-                  onClick={() => setActiveGroupId(group.id)}
-                >
-                  {group.name}
-                </button>
-              ))}
+              {groups.length === 0 ? (
+                <div className="empty-state compact">Create your first group.</div>
+              ) : (
+                groups.map((group) => (
+                  <button
+                    key={group.id}
+                    className={group.id === activeGroupId ? "group-tab active" : "group-tab"}
+                    onClick={() => setActiveGroupId(group.id)}
+                  >
+                    {group.name}
+                  </button>
+                ))
+              )}
             </div>
 
             <div className="inline-form">
@@ -759,35 +798,41 @@ function App() {
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Friends</p>
-                <h2>{activeGroup?.name}</h2>
+                <h2>{activeGroupName}</h2>
               </div>
               <span className="count-badge">{groupFriends.length}</span>
             </div>
 
             <div className="friend-list">
-              {groupFriends.map((friend) => (
-                <article className="friend-card" key={friend.id}>
-                  <div className="avatar" aria-hidden="true">
-                    {friend.name.slice(0, 1).toUpperCase()}
-                  </div>
-                  <div className="friend-main">
-                    <strong>{friend.name}</strong>
-                    <input
-                      value={friend.wallet}
-                      onChange={(event) => updateFriendWallet(friend.id, event.target.value)}
-                      placeholder="G... testnet wallet"
-                    />
-                  </div>
-                  <button
-                    className="icon-only subtle"
-                    onClick={() => removeFriend(friend.id)}
-                    aria-label={`Remove ${friend.name}`}
-                    title={`Remove ${friend.name}`}
-                  >
-                    <X size={16} />
-                  </button>
-                </article>
-              ))}
+              {!activeGroup ? (
+                <div className="empty-state">Create a group before adding friends.</div>
+              ) : groupFriends.length === 0 ? (
+                <div className="empty-state">No friends added yet.</div>
+              ) : (
+                groupFriends.map((friend) => (
+                  <article className="friend-card" key={friend.id}>
+                    <div className="avatar" aria-hidden="true">
+                      {friend.name.slice(0, 1).toUpperCase()}
+                    </div>
+                    <div className="friend-main">
+                      <strong>{friend.name}</strong>
+                      <input
+                        value={friend.wallet}
+                        onChange={(event) => updateFriendWallet(friend.id, event.target.value)}
+                        placeholder="G... testnet wallet"
+                      />
+                    </div>
+                    <button
+                      className="icon-only subtle"
+                      onClick={() => removeFriend(friend.id)}
+                      aria-label={`Remove ${friend.name}`}
+                      title={`Remove ${friend.name}`}
+                    >
+                      <X size={16} />
+                    </button>
+                  </article>
+                ))
+              )}
             </div>
 
             <div className="friend-add">

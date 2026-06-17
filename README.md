@@ -7,7 +7,7 @@ Splitwave is a Stellar testnet split-bill dApp for Level 1 White Belt. It connec
 - Connect and disconnect Freighter.
 - Enforce Stellar `TESTNET` for funding and payments.
 - Fetch and display the connected wallet's native XLM balance.
-- Add local groups and friends for a bill split.
+- Start from a clean empty state, then add local groups and friends for a bill split.
 - Copy local split request messages.
 - Build, sign, and submit an XLM payment through Freighter.
 - Show success/failure feedback and the transaction hash.
@@ -32,7 +32,7 @@ npm install
 npm run dev
 ```
 
-Open the local URL from Vite, install the Freighter browser extension, switch Freighter to `TESTNET`, connect, and use `Fund testnet` if the account has no testnet XLM.
+Open the local URL from Vite. If Freighter is not installed, the app shows an install button. After installing Freighter, switch it to `TESTNET`, connect, and use `Fund testnet` if the account has no testnet XLM.
 
 No API key is required. The only credential needed later is GitHub auth if you want to publish the repo from the CLI.
 

@@ -290,6 +290,7 @@ a {
   padding: 0 14px;
   color: #07070b;
   font-weight: 850;
+  text-decoration: none;
 }
 
 .icon-text:hover,
@@ -515,6 +516,12 @@ select:focus {
   border: 1px dashed rgba(236, 233, 255, 0.16);
   border-radius: 8px;
   color: var(--muted);
+}
+
+.empty-state.compact {
+  min-height: 36px;
+  padding: 0 12px;
+  white-space: nowrap;
 }
 
 .send-panel {
