@@ -40,6 +40,9 @@ const EXPLORER_BASE = "https://stellar.expert/explorer/testnet/tx";
 const FREIGHTER_INSTALL_URL =
   "https://chromewebstore.google.com/detail/freighter/bcacfldlkkdogcmkkibnjlakofdplcbk";
 const STORAGE_KEY = "splitwave:lastWallet";
+const HISTORY_STORAGE_KEY = "splitwave:paymentHistory";
+const FREIGHTER_DETECTION_TIMEOUT_MS = 6500;
+const FREIGHTER_APPROVAL_TIMEOUT_MS = 120000;
 
 type Friend = {
   id: string;
@@ -61,10 +64,26 @@ type Notice = {
   hash?: string;
 };
 
-type RailTarget = "split" | "friends" | "wallet";
+type ScreenTarget = "split" | "payment" | "history" | "wallet";
+type TxStage = "idle" | "prepare" | "sign" | "submit" | "sync" | "complete" | "error";
+
+type PaymentHistoryEntry = {
+  id: string;
+  status: "success" | "error";
+  amount: string;
+  recipient: string;
+  recipientName: string;
+  groupName: string;
+  billName: string;
+  message: string;
+  hash?: string;
+  createdAt: string;
+};
+
 type FreighterResult<T> = { ok: true; value: T } | { ok: false; message: string };
 
 const horizon = new Horizon.Server(HORIZON_URL);
+const SCREEN_TARGETS: ScreenTarget[] = ["split", "payment", "history", "wallet"];
 
 function shortKey(key: string) {
   if (!key) return "";
@@ -95,6 +114,53 @@ function createId(prefix: string) {
     return `${prefix}-${crypto.randomUUID()}`;
   }
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function isScreenTarget(value: string): value is ScreenTarget {
+  return SCREEN_TARGETS.includes(value as ScreenTarget);
+}
+
+function readInitialScreen(): ScreenTarget {
+  const hash = window.location.hash.replace("#", "");
+  return isScreenTarget(hash) ? hash : "split";
+}
+
+function isPaymentHistoryEntry(value: unknown): value is PaymentHistoryEntry {
+  if (typeof value !== "object" || value === null) return false;
+  const entry = value as Partial<PaymentHistoryEntry>;
+  return (
+    typeof entry.id === "string" &&
+    (entry.status === "success" || entry.status === "error") &&
+    typeof entry.amount === "string" &&
+    typeof entry.recipient === "string" &&
+    typeof entry.recipientName === "string" &&
+    typeof entry.groupName === "string" &&
+    typeof entry.billName === "string" &&
+    typeof entry.message === "string" &&
+    typeof entry.createdAt === "string"
+  );
+}
+
+function readPaymentHistory() {
+  try {
+    const stored = localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (!stored) return [];
+    const parsed: unknown = JSON.parse(stored);
+    return Array.isArray(parsed) ? parsed.filter(isPaymentHistoryEntry) : [];
+  } catch {
+    return [];
+  }
+}
+
+function formatHistoryDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function errorMessage(error: unknown) {
@@ -129,27 +195,39 @@ function freighterErrorMessage(error: unknown) {
   if (message.includes("reading 'switch'") || message.includes('reading "switch"')) {
     return "Freighter could not answer this request. Make sure the extension is enabled, refresh this page, and try again.";
   }
+  if (message.toLowerCase().includes("user declined")) {
+    return "Freighter request was rejected.";
+  }
   return message;
 }
 
 async function safeFreighterCall<T>(
   action: () => Promise<T>,
   fallbackMessage: string,
-  timeoutMs = 2500,
+  options: {
+    timeoutMs?: number;
+    timeoutMessage?: string;
+  } = {},
 ): Promise<FreighterResult<T>> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   try {
+    const actionPromise = action();
+    if (!options.timeoutMs) {
+      return { ok: true, value: await actionPromise };
+    }
+
     const timeout = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(() => {
         reject(
           new Error(
-            "Freighter did not respond. Make sure the extension is installed and enabled.",
+            options.timeoutMessage ??
+              "Freighter is taking longer than expected. Open or unlock the extension, then try again.",
           ),
         );
-      }, timeoutMs);
+      }, options.timeoutMs);
     });
 
-    return { ok: true, value: await Promise.race([action(), timeout]) };
+    return { ok: true, value: await Promise.race([actionPromise, timeout]) };
   } catch (error) {
     const message = freighterErrorMessage(error);
     return {
@@ -163,11 +241,10 @@ async function safeFreighterCall<T>(
 
 function App() {
   const shellRef = useRef<HTMLDivElement | null>(null);
-  const walletPanelRef = useRef<HTMLElement | null>(null);
-  const splitPanelRef = useRef<HTMLElement | null>(null);
-  const friendsPanelRef = useRef<HTMLElement | null>(null);
+  const screenRef = useRef<HTMLElement | null>(null);
   const balanceValueRef = useRef<HTMLSpanElement | null>(null);
   const previousBalanceRef = useRef<string | null>(null);
+  const txStageResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [publicKey, setPublicKey] = useState("");
   const [networkName, setNetworkName] = useState("TESTNET");
   const [balance, setBalance] = useState<string | null>(null);
@@ -197,7 +274,11 @@ function App() {
   const [selectedRecipientId, setSelectedRecipientId] = useState("");
   const [sendAmount, setSendAmount] = useState("");
   const [copiedRequestId, setCopiedRequestId] = useState("");
-  const [activeRailTarget, setActiveRailTarget] = useState<RailTarget>("split");
+  const [activeScreen, setActiveScreen] = useState<ScreenTarget>(readInitialScreen);
+  const [txStage, setTxStage] = useState<TxStage>("idle");
+  const [paymentHistory, setPaymentHistory] = useState<PaymentHistoryEntry[]>(
+    readPaymentHistory,
+  );
 
   const activeGroup = useMemo(
     () => groups.find((group) => group.id === activeGroupId),
@@ -223,26 +304,17 @@ function App() {
   const prefersReducedMotion = () =>
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  function railButtonClass(target: RailTarget) {
-    return activeRailTarget === target ? "rail-button active" : "rail-button";
+  function railButtonClass(target: ScreenTarget) {
+    return activeScreen === target ? "rail-button active" : "rail-button";
   }
 
-  function scrollToPanel(target: RailTarget) {
-    const panels: Record<RailTarget, HTMLElement | null> = {
-      split: splitPanelRef.current,
-      friends: friendsPanelRef.current,
-      wallet: walletPanelRef.current,
-    };
-    const panel = panels[target];
-    if (!panel) return;
-
-    setActiveRailTarget(target);
-    panel.scrollIntoView({
+  function openScreen(target: ScreenTarget) {
+    setActiveScreen(target);
+    window.history.replaceState(null, "", `#${target}`);
+    window.scrollTo({
+      top: 0,
       behavior: prefersReducedMotion() ? "auto" : "smooth",
-      block: "center",
-      inline: "nearest",
     });
-    panel.focus({ preventScroll: true });
   }
 
   async function refreshNetworkAndBalance(address = publicKey) {
@@ -251,6 +323,11 @@ function App() {
       const detailsResult = await safeFreighterCall(
         () => freighterGetNetworkDetails(),
         "Could not read the selected Freighter network.",
+        {
+          timeoutMs: FREIGHTER_DETECTION_TIMEOUT_MS,
+          timeoutMessage:
+            "Freighter did not return network details. Unlock the extension, refresh, and try again.",
+        },
       );
       if (!detailsResult.ok) {
         setWalletNotice({ type: "warning", message: detailsResult.message });
@@ -299,9 +376,14 @@ function App() {
       const installedResult = await safeFreighterCall(
         () => freighterIsConnected(),
         "Could not check whether Freighter is installed.",
+        {
+          timeoutMs: FREIGHTER_DETECTION_TIMEOUT_MS,
+          timeoutMessage:
+            "Freighter did not answer the install check. Unlock the extension or refresh this page.",
+        },
       );
       if (!installedResult.ok) {
-        setFreighterInstalled(false);
+        setFreighterInstalled(null);
         setWalletNotice({
           type: "warning",
           message: installedResult.message,
@@ -323,6 +405,11 @@ function App() {
       const addressRequest = await safeFreighterCall(
         () => freighterGetAddress(),
         "Could not read your Freighter address.",
+        {
+          timeoutMs: FREIGHTER_DETECTION_TIMEOUT_MS,
+          timeoutMessage:
+            "Freighter did not return an address. Open the extension and try connecting again.",
+        },
       );
       if (!addressRequest.ok) {
         setWalletNotice({ type: "warning", message: addressRequest.message });
@@ -355,9 +442,14 @@ function App() {
       const installedResult = await safeFreighterCall(
         () => freighterIsConnected(),
         "Could not check whether Freighter is installed.",
+        {
+          timeoutMs: FREIGHTER_DETECTION_TIMEOUT_MS,
+          timeoutMessage:
+            "Freighter did not answer the install check. Unlock the extension or refresh this page.",
+        },
       );
       if (!installedResult.ok) {
-        setFreighterInstalled(false);
+        setFreighterInstalled(null);
         setWalletNotice({
           type: "warning",
           message: installedResult.message,
@@ -379,6 +471,11 @@ function App() {
       const accessResult = await safeFreighterCall(
         () => freighterRequestAccess(),
         "Could not request access from Freighter.",
+        {
+          timeoutMs: FREIGHTER_APPROVAL_TIMEOUT_MS,
+          timeoutMessage:
+            "Freighter did not approve access in time. Open or unlock the extension and approve the request.",
+        },
       );
       if (!accessResult.ok) {
         setWalletNotice({ type: "warning", message: accessResult.message });
@@ -518,15 +615,51 @@ function App() {
     window.setTimeout(() => setCopiedRequestId(""), 1600);
   }
 
+  function pushPaymentHistory(
+    entry: Omit<PaymentHistoryEntry, "id" | "createdAt">,
+  ) {
+    setPaymentHistory((current) => [
+      {
+        ...entry,
+        id: createId("tx"),
+        createdAt: new Date().toISOString(),
+      },
+      ...current,
+    ].slice(0, 24));
+  }
+
+  function finishTxStage(stage: Extract<TxStage, "complete" | "error">) {
+    if (txStageResetRef.current) clearTimeout(txStageResetRef.current);
+    setTxStage(stage);
+    txStageResetRef.current = setTimeout(() => {
+      setTxStage("idle");
+      txStageResetRef.current = null;
+    }, 1800);
+  }
+
+  function clearPaymentHistory() {
+    setPaymentHistory([]);
+  }
+
   async function sendPayment() {
     const destination = recipientAddress.trim();
     const amount = formatXlm(Number(sendAmount || splitShareText));
+    const selectedRecipient = friends.find(
+      (friend) => friend.id === selectedRecipientId,
+    );
+    const recipientName = selectedRecipient?.name ?? "Manual address";
 
     setTransactionNotice({
       type: "loading",
       message: "Building Stellar testnet transaction...",
     });
     setIsTxBusy(true);
+    if (txStageResetRef.current) {
+      clearTimeout(txStageResetRef.current);
+      txStageResetRef.current = null;
+    }
+    setTxStage("prepare");
+    openScreen("payment");
 
     try {
       if (!publicKey) throw new Error("Connect Freighter first.");
@@ -542,6 +675,7 @@ function App() {
       }
 
       const account = await horizon.loadAccount(publicKey);
+      setTxStage("sign");
       const tx = new TransactionBuilder(account, {
         fee: BASE_FEE,
         networkPassphrase: Networks.TESTNET,
@@ -564,12 +698,18 @@ function App() {
             address: publicKey,
           }),
         "Could not sign the transaction with Freighter.",
+        {
+          timeoutMs: FREIGHTER_APPROVAL_TIMEOUT_MS,
+          timeoutMessage:
+            "Freighter did not return a signature in time. Check the extension popup, unlock it if needed, then try again.",
+        },
       );
       if (!signedResult.ok) throw new Error(signedResult.message);
 
       const signed = signedResult.value;
       if (signed.error) throw new Error(signed.error.message);
 
+      setTxStage("submit");
       const signedTx = TransactionBuilder.fromXDR(
         signed.signedTxXdr,
         Networks.TESTNET,
@@ -581,9 +721,32 @@ function App() {
         message: `Sent ${amount} XLM on Stellar testnet.`,
         hash: result.hash,
       });
+      pushPaymentHistory({
+        status: "success",
+        amount,
+        recipient: destination,
+        recipientName,
+        groupName: activeGroupName,
+        billName,
+        message: `Sent ${amount} XLM on Stellar testnet.`,
+        hash: result.hash,
+      });
+      setTxStage("sync");
       await refreshNetworkAndBalance(publicKey);
+      finishTxStage("complete");
     } catch (error) {
-      setTransactionNotice({ type: "error", message: errorMessage(error) });
+      const message = errorMessage(error);
+      setTransactionNotice({ type: "error", message });
+      pushPaymentHistory({
+        status: "error",
+        amount,
+        recipient: destination || "No recipient",
+        recipientName,
+        groupName: activeGroupName,
+        billName,
+        message,
+      });
+      finishTxStage("error");
     } finally {
       setIsTxBusy(false);
     }
@@ -598,6 +761,25 @@ function App() {
     }
   }, []);
 
+  useEffect(() => {
+    function syncScreenFromHash() {
+      setActiveScreen(readInitialScreen());
+    }
+
+    window.addEventListener("hashchange", syncScreenFromHash);
+    return () => window.removeEventListener("hashchange", syncScreenFromHash);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(paymentHistory));
+  }, [paymentHistory]);
+
+  useEffect(() => {
+    return () => {
+      if (txStageResetRef.current) clearTimeout(txStageResetRef.current);
+    };
+  }, []);
+
   useLayoutEffect(() => {
     if (!shellRef.current || prefersReducedMotion()) return;
 
@@ -606,24 +788,40 @@ function App() {
         defaults: { duration: 0.58, ease: "power3.out" },
       });
 
-      intro
-        .from(".topbar > *", { y: -18, stagger: 0.08 })
-        .from(".visual-panel", { y: 28, scale: 0.985 }, "-=0.18")
-        .from(".panel", { y: 26, stagger: 0.065 }, "-=0.34")
-        .from(
-          ".side-rail .brand-mark, .side-rail .rail-button",
-          { x: -16, stagger: 0.055 },
-          "-=0.62",
-        );
+      const panels = shellRef.current?.querySelectorAll(".panel");
+      const railTargets = shellRef.current?.querySelectorAll(
+        ".side-rail .brand-mark, .side-rail .rail-button",
+      );
+      const visualPanel = shellRef.current?.querySelector(".visual-panel");
+      const visualImage = shellRef.current?.querySelector(".visual-panel img");
+      const glowTargets = shellRef.current?.querySelectorAll(
+        ".share-chip, .network-pill",
+      );
 
-      gsap.to(".visual-panel img", {
-        y: -12,
-        scale: 1.035,
-        duration: 5.5,
-        repeat: -1,
-        yoyo: true,
-        ease: "sine.inOut",
-      });
+      intro.from(".topbar > *", { y: -18, stagger: 0.08 });
+
+      if (visualPanel) {
+        intro.from(visualPanel, { y: 28, scale: 0.985 }, "-=0.18");
+      }
+
+      if (panels?.length) {
+        intro.from(panels, { y: 26, stagger: 0.065 }, "-=0.34");
+      }
+
+      if (railTargets?.length) {
+        intro.from(railTargets, { x: -16, stagger: 0.055 }, "-=0.62");
+      }
+
+      if (visualImage) {
+        gsap.to(visualImage, {
+          y: -12,
+          scale: 1.035,
+          duration: 5.5,
+          repeat: -1,
+          yoyo: true,
+          ease: "sine.inOut",
+        });
+      }
 
       gsap.to(".brand-mark svg", {
         rotate: 360,
@@ -633,17 +831,36 @@ function App() {
         ease: "none",
       });
 
-      gsap.to(".share-chip, .network-pill", {
-        boxShadow: "0 0 18px rgba(182, 255, 59, 0.34)",
-        duration: 1.8,
-        repeat: -1,
-        yoyo: true,
-        ease: "sine.inOut",
-      });
+      if (glowTargets?.length) {
+        gsap.to(glowTargets, {
+          boxShadow: "0 0 18px rgba(182, 255, 59, 0.34)",
+          duration: 1.8,
+          repeat: -1,
+          yoyo: true,
+          ease: "sine.inOut",
+        });
+      }
     }, shellRef);
 
     return () => context.revert();
   }, []);
+
+  useEffect(() => {
+    if (!screenRef.current || prefersReducedMotion()) return;
+
+    gsap.fromTo(
+      screenRef.current.querySelectorAll(".screen-animate"),
+      { y: 18, scale: 0.992 },
+      {
+        y: 0,
+        scale: 1,
+        duration: 0.42,
+        stagger: 0.045,
+        overwrite: "auto",
+        ease: "power3.out",
+      },
+    );
+  }, [activeScreen]);
 
   useEffect(() => {
     if (!balanceValueRef.current || prefersReducedMotion()) {
@@ -673,6 +890,7 @@ function App() {
     const targets = shellRef.current.querySelectorAll(
       ".share-chip, .request-card, .visual-copy",
     );
+    if (!targets.length) return;
 
     gsap.fromTo(
       targets,
@@ -741,29 +959,39 @@ function App() {
         <button
           className={railButtonClass("split")}
           type="button"
-          onClick={() => scrollToPanel("split")}
+          onClick={() => openScreen("split")}
           aria-label="Go to split calculator"
-          aria-pressed={activeRailTarget === "split"}
+          aria-pressed={activeScreen === "split"}
           title="Split calculator"
         >
           <CircleDollarSign size={19} />
         </button>
         <button
-          className={railButtonClass("friends")}
+          className={railButtonClass("payment")}
           type="button"
-          onClick={() => scrollToPanel("friends")}
-          aria-label="Go to friends"
-          aria-pressed={activeRailTarget === "friends"}
-          title="Friends"
+          onClick={() => openScreen("payment")}
+          aria-label="Go to payment"
+          aria-pressed={activeScreen === "payment"}
+          title="Payment"
         >
-          <Users size={19} />
+          <Send size={19} />
+        </button>
+        <button
+          className={railButtonClass("history")}
+          type="button"
+          onClick={() => openScreen("history")}
+          aria-label="Go to history"
+          aria-pressed={activeScreen === "history"}
+          title="History"
+        >
+          <Clipboard size={19} />
         </button>
         <button
           className={railButtonClass("wallet")}
           type="button"
-          onClick={() => scrollToPanel("wallet")}
+          onClick={() => openScreen("wallet")}
           aria-label="Go to wallet"
-          aria-pressed={activeRailTarget === "wallet"}
+          aria-pressed={activeScreen === "wallet"}
           title="Wallet"
         >
           <Wallet size={19} />
@@ -839,339 +1067,580 @@ function App() {
           </article>
         </section>
 
-        <section className="dashboard-grid">
-          <div className="visual-panel">
-            <img src={coverArt} alt="" />
-            <div className="visual-copy">
-              <p className="eyebrow">Group</p>
-              <h2>{activeGroupName}</h2>
-              <p>{participantCount} people splitting {formatXlm(Number(billTotal) || 0)} XLM</p>
-            </div>
-          </div>
-
-          <section
-            className="panel wallet-panel"
-            aria-label="Wallet"
-            ref={walletPanelRef}
-            tabIndex={-1}
-          >
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">Wallet</p>
-                <h2>{connected ? shortKey(publicKey) : "Freighter"}</h2>
+        <section
+          className={`screen-view ${activeScreen}-screen`}
+          aria-label={`${activeScreen} screen`}
+          ref={screenRef}
+        >
+          {activeScreen === "split" && (
+            <div className="dashboard-grid split-screen-grid">
+              <div className="visual-panel screen-animate">
+                <img src={coverArt} alt="" />
+                <div className="visual-copy">
+                  <p className="eyebrow">Group</p>
+                  <h2>{activeGroupName}</h2>
+                  <p>
+                    {participantCount} people splitting{" "}
+                    {formatXlm(Number(billTotal) || 0)} XLM
+                  </p>
+                </div>
               </div>
-              <button
-                className="icon-only"
-                onClick={() => refreshNetworkAndBalance()}
-                disabled={!connected || isWalletBusy}
-                aria-label="Refresh wallet balance"
-                title="Refresh wallet balance"
-              >
-                <RefreshCcw size={18} />
-              </button>
-            </div>
 
-            <div className="balance-display">
-              <span ref={balanceValueRef}>{formatBalance(balance)}</span>
-              <strong>XLM</strong>
-            </div>
+              <section className="panel split-panel screen-animate" aria-label="Split calculator">
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">Split</p>
+                    <h2>{billName}</h2>
+                  </div>
+                  <span className="share-chip">{splitShareText} XLM each</span>
+                </div>
 
-            <StatusNotice notice={walletNotice} />
-
-            <div className="wallet-actions">
-              {freighterInstalled === false ? (
-                <a
-                  className="icon-text primary"
-                  href={FREIGHTER_INSTALL_URL}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <Wallet size={17} />
-                  Install Freighter
-                </a>
-              ) : (
-                <button
-                  className="icon-text secondary"
-                  onClick={fundWallet}
-                  disabled={!connected || isWalletBusy || !onTestnet}
-                >
-                  {isWalletBusy ? <Loader2 className="spin" size={17} /> : <Sparkles size={17} />}
-                  Fund testnet
-                </button>
-              )}
-              {!connected && freighterInstalled !== false && (
-                <button
-                  className="icon-text primary"
-                  onClick={connectWallet}
-                  disabled={isWalletBusy}
-                >
-                  <Wallet size={17} />
-                  Connect wallet
-                </button>
-              )}
-            </div>
-          </section>
-
-          <section
-            className="panel split-panel"
-            aria-label="Split calculator"
-            ref={splitPanelRef}
-            tabIndex={-1}
-          >
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">Split</p>
-                <h2>{billName}</h2>
-              </div>
-              <span className="share-chip">{splitShareText} XLM each</span>
-            </div>
-
-            <div className="form-grid">
-              <label>
-                <span>Bill name</span>
-                <input
-                  value={billTitle}
-                  onChange={(event) => setBillTitle(event.target.value)}
-                  placeholder="Bill name"
-                  maxLength={40}
-                />
-              </label>
-              <label>
-                <span>Total XLM</span>
-                <input
-                  value={billTotal}
-                  onChange={(event) => setBillTotal(event.target.value)}
-                  placeholder="0"
-                  inputMode="decimal"
-                />
-              </label>
-              <label>
-                <span>Paid by</span>
-                <select value={payer} onChange={(event) => setPayer(event.target.value)}>
-                  <option value="friend">A friend paid</option>
-                  <option value="me">I paid</option>
-                </select>
-              </label>
-              <label>
-                <span>People</span>
-                <input value={participantCount} readOnly />
-              </label>
-            </div>
-
-            <div className="group-tabs" aria-label="Groups">
-              {groups.length === 0 ? (
-                <div className="empty-state compact">Create your first group.</div>
-              ) : (
-                groups.map((group) => (
-                  <button
-                    key={group.id}
-                    className={group.id === activeGroupId ? "group-tab active" : "group-tab"}
-                    onClick={() => setActiveGroupId(group.id)}
-                  >
-                    {group.name}
-                  </button>
-                ))
-              )}
-            </div>
-
-            <div className="inline-form">
-              <input
-                value={newGroupName}
-                onChange={(event) => setNewGroupName(event.target.value)}
-                placeholder="New group"
-                maxLength={22}
-              />
-              <button className="icon-only" onClick={addGroup} aria-label="Add group" title="Add group">
-                <Plus size={18} />
-              </button>
-            </div>
-          </section>
-
-          <section
-            className="panel friends-panel"
-            aria-label="Friends"
-            ref={friendsPanelRef}
-            tabIndex={-1}
-          >
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">Friends</p>
-                <h2>{activeGroupName}</h2>
-              </div>
-              <span className="count-badge">{groupFriends.length}</span>
-            </div>
-
-            <div className="friend-list">
-              {!activeGroup ? (
-                <div className="empty-state">Create a group before adding friends.</div>
-              ) : groupFriends.length === 0 ? (
-                <div className="empty-state">No friends added yet.</div>
-              ) : (
-                groupFriends.map((friend) => (
-                  <article className="friend-card" key={friend.id}>
-                    <div className="avatar" aria-hidden="true">
-                      {friend.name.slice(0, 1).toUpperCase()}
-                    </div>
-                    <div className="friend-main">
-                      <strong>{friend.name}</strong>
-                      <input
-                        value={friend.wallet}
-                        onChange={(event) => updateFriendWallet(friend.id, event.target.value)}
-                        placeholder="G... testnet wallet"
-                      />
-                    </div>
-                    <button
-                      className="icon-only subtle"
-                      onClick={() => removeFriend(friend.id)}
-                      aria-label={`Remove ${friend.name}`}
-                      title={`Remove ${friend.name}`}
+                <div className="form-grid">
+                  <label>
+                    <span>Bill name</span>
+                    <input
+                      value={billTitle}
+                      onChange={(event) => setBillTitle(event.target.value)}
+                      placeholder="Bill name"
+                      maxLength={40}
+                    />
+                  </label>
+                  <label>
+                    <span>Total XLM</span>
+                    <input
+                      value={billTotal}
+                      onChange={(event) => setBillTotal(event.target.value)}
+                      placeholder="0"
+                      inputMode="decimal"
+                    />
+                  </label>
+                  <label>
+                    <span>Paid by</span>
+                    <select
+                      value={payer}
+                      onChange={(event) => setPayer(event.target.value)}
                     >
-                      <X size={16} />
-                    </button>
-                  </article>
-                ))
-              )}
-            </div>
+                      <option value="friend">A friend paid</option>
+                      <option value="me">I paid</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>People</span>
+                    <input value={participantCount} readOnly />
+                  </label>
+                </div>
 
-            <div className="friend-add">
-              <input
-                value={newFriendName}
-                onChange={(event) => setNewFriendName(event.target.value)}
-                placeholder="Friend name"
-                maxLength={24}
-                disabled={!activeGroup}
-              />
-              <input
-                value={newFriendWallet}
-                onChange={(event) => setNewFriendWallet(event.target.value)}
-                placeholder="Optional G... wallet"
-                disabled={!activeGroup}
-              />
-              <button
-                className="icon-only"
-                onClick={addFriend}
-                aria-label="Add friend"
-                title={activeGroup ? "Add friend" : "Create a group first"}
-                disabled={!activeGroup}
-              >
-                <Plus size={18} />
-              </button>
-            </div>
-          </section>
+                <div className="group-tabs" aria-label="Groups">
+                  {groups.length === 0 ? (
+                    <div className="empty-state compact">Create your first group.</div>
+                  ) : (
+                    groups.map((group) => (
+                      <button
+                        key={group.id}
+                        className={
+                          group.id === activeGroupId ? "group-tab active" : "group-tab"
+                        }
+                        onClick={() => setActiveGroupId(group.id)}
+                      >
+                        {group.name}
+                      </button>
+                    ))
+                  )}
+                </div>
 
-          <section className="panel send-panel" aria-label="Send XLM">
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">Testnet Payment</p>
-                <h2>Send XLM</h2>
-              </div>
-              <Send size={20} />
-            </div>
-
-            <div className="form-stack">
-              <label>
-                <span>Recipient</span>
-                <select
-                  value={selectedRecipientId}
-                  onChange={(event) => selectRecipient(event.target.value)}
-                >
-                  <option value="">Manual address</option>
-                  {groupFriends.map((friend) => (
-                    <option value={friend.id} key={friend.id}>
-                      {friend.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>Wallet address</span>
-                <input
-                  value={recipientAddress}
-                  onChange={(event) => {
-                    setRecipientAddress(event.target.value);
-                    setSelectedRecipientId("");
-                  }}
-                  placeholder="G..."
-                />
-              </label>
-              <label>
-                <span>Amount</span>
-                <div className="amount-line">
+                <div className="inline-form">
                   <input
-                    value={sendAmount}
-                    onChange={(event) => setSendAmount(event.target.value)}
-                    placeholder={splitShareText}
-                    inputMode="decimal"
+                    value={newGroupName}
+                    onChange={(event) => setNewGroupName(event.target.value)}
+                    placeholder="New group"
+                    maxLength={22}
                   />
                   <button
-                    className="icon-text ghost compact"
-                    onClick={() => setSendAmount(splitShareText)}
-                    type="button"
+                    className="icon-only"
+                    onClick={addGroup}
+                    aria-label="Add group"
+                    title="Add group"
                   >
-                    <CircleDollarSign size={16} />
-                    Split
+                    <Plus size={18} />
                   </button>
                 </div>
-              </label>
-            </div>
+              </section>
 
-            <button
-              className="send-button"
-              onClick={sendPayment}
-              disabled={isTxBusy || !connected || !onTestnet}
-            >
-              {isTxBusy ? <Loader2 className="spin" size={19} /> : <Send size={19} />}
-              Sign and send
-            </button>
+              <section className="panel friends-panel screen-animate" aria-label="Friends">
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">Friends</p>
+                    <h2>{activeGroupName}</h2>
+                  </div>
+                  <span className="count-badge">{groupFriends.length}</span>
+                </div>
 
-            <StatusNotice notice={transactionNotice} />
-            {transactionNotice.hash && (
-              <a
-                className="hash-link"
-                href={`${EXPLORER_BASE}/${transactionNotice.hash}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {shortKey(transactionNotice.hash)}
-              </a>
-            )}
-          </section>
+                <div className="friend-list">
+                  {!activeGroup ? (
+                    <div className="empty-state">Create a group before adding friends.</div>
+                  ) : groupFriends.length === 0 ? (
+                    <div className="empty-state">No friends added yet.</div>
+                  ) : (
+                    groupFriends.map((friend) => (
+                      <article className="friend-card" key={friend.id}>
+                        <div className="avatar" aria-hidden="true">
+                          {friend.name.slice(0, 1).toUpperCase()}
+                        </div>
+                        <div className="friend-main">
+                          <strong>{friend.name}</strong>
+                          <input
+                            value={friend.wallet}
+                            onChange={(event) =>
+                              updateFriendWallet(friend.id, event.target.value)
+                            }
+                            placeholder="G... testnet wallet"
+                          />
+                        </div>
+                        <button
+                          className="icon-only subtle"
+                          onClick={() => removeFriend(friend.id)}
+                          aria-label={`Remove ${friend.name}`}
+                          title={`Remove ${friend.name}`}
+                        >
+                          <X size={16} />
+                        </button>
+                      </article>
+                    ))
+                  )}
+                </div>
 
-          <section className="panel requests-panel" aria-label="Split requests">
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">Requests</p>
-                <h2>{payer === "me" ? "Collect" : "Settle"}</h2>
-              </div>
-              <Clipboard size={20} />
-            </div>
-
-            <div className="request-list">
-              {groupFriends.length === 0 ? (
-                <div className="empty-state">No friends in this group.</div>
-              ) : (
-                groupFriends.map((friend) => (
-                  <article
-                    className="request-card"
-                    data-request-id={friend.id}
-                    key={friend.id}
+                <div className="friend-add">
+                  <input
+                    value={newFriendName}
+                    onChange={(event) => setNewFriendName(event.target.value)}
+                    placeholder="Friend name"
+                    maxLength={24}
+                    disabled={!activeGroup}
+                  />
+                  <input
+                    value={newFriendWallet}
+                    onChange={(event) => setNewFriendWallet(event.target.value)}
+                    placeholder="Optional G... wallet"
+                    disabled={!activeGroup}
+                  />
+                  <button
+                    className="icon-only"
+                    onClick={addFriend}
+                    aria-label="Add friend"
+                    title={activeGroup ? "Add friend" : "Create a group first"}
+                    disabled={!activeGroup}
                   >
-                    <div>
-                      <strong>{friend.name}</strong>
-                      <span>{splitShareText} XLM</span>
-                    </div>
-                    <button className="icon-text ghost compact" onClick={() => copyRequest(friend)}>
-                      {copiedRequestId === friend.id ? <CheckCircle2 size={16} /> : <Copy size={16} />}
-                      {copiedRequestId === friend.id ? "Copied" : "Copy"}
-                    </button>
-                  </article>
-                ))
-              )}
+                    <Plus size={18} />
+                  </button>
+                </div>
+              </section>
+
+              <section className="panel requests-panel screen-animate" aria-label="Split requests">
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">Requests</p>
+                    <h2>{payer === "me" ? "Collect" : "Settle"}</h2>
+                  </div>
+                  <Clipboard size={20} />
+                </div>
+
+                <div className="request-list">
+                  {groupFriends.length === 0 ? (
+                    <div className="empty-state">No friends in this group.</div>
+                  ) : (
+                    groupFriends.map((friend) => (
+                      <article
+                        className="request-card"
+                        data-request-id={friend.id}
+                        key={friend.id}
+                      >
+                        <div>
+                          <strong>{friend.name}</strong>
+                          <span>{splitShareText} XLM</span>
+                        </div>
+                        <button
+                          className="icon-text ghost compact"
+                          onClick={() => copyRequest(friend)}
+                        >
+                          {copiedRequestId === friend.id ? (
+                            <CheckCircle2 size={16} />
+                          ) : (
+                            <Copy size={16} />
+                          )}
+                          {copiedRequestId === friend.id ? "Copied" : "Copy"}
+                        </button>
+                      </article>
+                    ))
+                  )}
+                </div>
+              </section>
             </div>
-          </section>
+          )}
+
+          {activeScreen === "payment" && (
+            <div className="payment-grid">
+              <section className="panel send-panel screen-animate" aria-label="Send XLM">
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">Testnet Payment</p>
+                    <h2>Send XLM</h2>
+                  </div>
+                  <Send size={20} />
+                </div>
+
+                <div className="form-stack">
+                  <label>
+                    <span>Recipient</span>
+                    <select
+                      value={selectedRecipientId}
+                      onChange={(event) => selectRecipient(event.target.value)}
+                    >
+                      <option value="">Manual address</option>
+                      {groupFriends.map((friend) => (
+                        <option value={friend.id} key={friend.id}>
+                          {friend.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Wallet address</span>
+                    <input
+                      value={recipientAddress}
+                      onChange={(event) => {
+                        setRecipientAddress(event.target.value);
+                        setSelectedRecipientId("");
+                      }}
+                      placeholder="G..."
+                    />
+                  </label>
+                  <label>
+                    <span>Amount</span>
+                    <div className="amount-line">
+                      <input
+                        value={sendAmount}
+                        onChange={(event) => setSendAmount(event.target.value)}
+                        placeholder={splitShareText}
+                        inputMode="decimal"
+                      />
+                      <button
+                        className="icon-text ghost compact"
+                        onClick={() => setSendAmount(splitShareText)}
+                        type="button"
+                      >
+                        <CircleDollarSign size={16} />
+                        Split
+                      </button>
+                    </div>
+                  </label>
+                </div>
+
+                <button
+                  className="send-button"
+                  onClick={sendPayment}
+                  disabled={isTxBusy || !connected || !onTestnet}
+                >
+                  {isTxBusy ? <Loader2 className="spin" size={19} /> : <Send size={19} />}
+                  Sign and send
+                </button>
+
+                <StatusNotice notice={transactionNotice} />
+                {transactionNotice.hash && (
+                  <a
+                    className="hash-link"
+                    href={`${EXPLORER_BASE}/${transactionNotice.hash}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {shortKey(transactionNotice.hash)}
+                  </a>
+                )}
+              </section>
+
+              <PaymentPreloader stage={txStage} notice={transactionNotice} />
+
+              <section className="panel payment-context screen-animate" aria-label="Payment details">
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">Queue</p>
+                    <h2>{billName}</h2>
+                  </div>
+                  <span className="share-chip">{splitShareText} XLM</span>
+                </div>
+
+                <div className="detail-grid">
+                  <div>
+                    <span>Group</span>
+                    <strong>{activeGroupName}</strong>
+                  </div>
+                  <div>
+                    <span>Recipient</span>
+                    <strong>
+                      {selectedRecipientId
+                        ? groupFriends.find((friend) => friend.id === selectedRecipientId)?.name
+                        : "Manual"}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Address</span>
+                    <strong>{recipientAddress ? shortKey(recipientAddress) : "G..."}</strong>
+                  </div>
+                  <div>
+                    <span>Network</span>
+                    <strong>{networkName || "UNKNOWN"}</strong>
+                  </div>
+                </div>
+              </section>
+            </div>
+          )}
+
+          {activeScreen === "history" && (
+            <PaymentHistoryPanel history={paymentHistory} onClear={clearPaymentHistory} />
+          )}
+
+          {activeScreen === "wallet" && (
+            <div className="wallet-grid">
+              <section className="panel wallet-panel screen-animate" aria-label="Wallet">
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">Wallet</p>
+                    <h2>{connected ? shortKey(publicKey) : "Freighter"}</h2>
+                  </div>
+                  <button
+                    className="icon-only"
+                    onClick={() => refreshNetworkAndBalance()}
+                    disabled={!connected || isWalletBusy}
+                    aria-label="Refresh wallet balance"
+                    title="Refresh wallet balance"
+                  >
+                    <RefreshCcw size={18} />
+                  </button>
+                </div>
+
+                <div className="balance-display">
+                  <span ref={balanceValueRef}>{formatBalance(balance)}</span>
+                  <strong>XLM</strong>
+                </div>
+
+                <StatusNotice notice={walletNotice} />
+
+                <div className="wallet-actions">
+                  {freighterInstalled === false ? (
+                    <a
+                      className="icon-text primary"
+                      href={FREIGHTER_INSTALL_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <Wallet size={17} />
+                      Install Freighter
+                    </a>
+                  ) : (
+                    <button
+                      className="icon-text secondary"
+                      onClick={fundWallet}
+                      disabled={!connected || isWalletBusy || !onTestnet}
+                    >
+                      {isWalletBusy ? (
+                        <Loader2 className="spin" size={17} />
+                      ) : (
+                        <Sparkles size={17} />
+                      )}
+                      Fund testnet
+                    </button>
+                  )}
+                  {!connected && freighterInstalled !== false && (
+                    <button
+                      className="icon-text primary"
+                      onClick={connectWallet}
+                      disabled={isWalletBusy}
+                    >
+                      <Wallet size={17} />
+                      Connect wallet
+                    </button>
+                  )}
+                </div>
+              </section>
+
+              <section className="panel wallet-profile screen-animate" aria-label="Account details">
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">Account</p>
+                    <h2>{connected ? "Connected" : "Disconnected"}</h2>
+                  </div>
+                  <Wallet size={20} />
+                </div>
+
+                <div className="detail-grid">
+                  <div>
+                    <span>Public key</span>
+                    <strong>{connected ? shortKey(publicKey) : "None"}</strong>
+                  </div>
+                  <div>
+                    <span>Network</span>
+                    <strong>{networkName || "UNKNOWN"}</strong>
+                  </div>
+                  <div>
+                    <span>Balance</span>
+                    <strong>{formatBalance(balance)} XLM</strong>
+                  </div>
+                  <div>
+                    <span>History</span>
+                    <strong>{paymentHistory.length}</strong>
+                  </div>
+                </div>
+              </section>
+            </div>
+          )}
         </section>
       </main>
     </div>
+  );
+}
+
+const PAYMENT_STEPS: Array<{
+  stage: Extract<TxStage, "prepare" | "sign" | "submit" | "sync">;
+  label: string;
+}> = [
+  { stage: "prepare", label: "Build" },
+  { stage: "sign", label: "Sign" },
+  { stage: "submit", label: "Submit" },
+  { stage: "sync", label: "Sync" },
+];
+
+function paymentStageTitle(stage: TxStage) {
+  if (stage === "prepare") return "Building transaction";
+  if (stage === "sign") return "Waiting for Freighter";
+  if (stage === "submit") return "Submitting to Horizon";
+  if (stage === "sync") return "Refreshing balance";
+  if (stage === "complete") return "Payment complete";
+  if (stage === "error") return "Payment stopped";
+  return "Ready to send";
+}
+
+function PaymentPreloader({
+  stage,
+  notice,
+}: {
+  stage: TxStage;
+  notice: Notice;
+}) {
+  const activeIndex = PAYMENT_STEPS.findIndex((step) => step.stage === stage);
+  const isFinal = stage === "complete" || stage === "error";
+
+  function stageClass(index: number) {
+    if (stage === "complete") return "done";
+    if (stage === "error" && index === Math.max(activeIndex, 0)) return "error";
+    if (index < activeIndex) return "done";
+    if (index === activeIndex) return "active";
+    return "";
+  }
+
+  return (
+    <section
+      className={`panel preloader-panel screen-animate ${stage}`}
+      aria-label="Payment status"
+    >
+      <div className="payment-orbit" aria-hidden="true">
+        <span className="orbit-ring" />
+        <span className="orbit-ring outer" />
+        <span className="orbit-core">
+          {stage === "complete" ? <CheckCircle2 size={28} /> : <Send size={28} />}
+        </span>
+        <span className="orbit-dot dot-a" />
+        <span className="orbit-dot dot-b" />
+        <span className="orbit-dot dot-c" />
+      </div>
+
+      <div className="preloader-copy">
+        <p className="eyebrow">Payment status</p>
+        <h2>{paymentStageTitle(stage)}</h2>
+        <p>{notice.message}</p>
+      </div>
+
+      <div className="stage-list">
+        {PAYMENT_STEPS.map((step, index) => (
+          <div className={`stage-item ${stageClass(index)}`} key={step.stage}>
+            <span>{index + 1}</span>
+            <strong>{step.label}</strong>
+          </div>
+        ))}
+      </div>
+
+      {isFinal && <span className="preloader-flash" aria-hidden="true" />}
+    </section>
+  );
+}
+
+function PaymentHistoryPanel({
+  history,
+  onClear,
+}: {
+  history: PaymentHistoryEntry[];
+  onClear: () => void;
+}) {
+  return (
+    <section className="panel history-panel screen-animate" aria-label="Payment history">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">History</p>
+          <h2>{history.length} records</h2>
+        </div>
+        <button
+          className="icon-text ghost compact"
+          onClick={onClear}
+          disabled={history.length === 0}
+          type="button"
+        >
+          <X size={16} />
+          Clear
+        </button>
+      </div>
+
+      <div className="history-list">
+        {history.length === 0 ? (
+          <div className="empty-state history-empty">No payment history yet.</div>
+        ) : (
+          history.map((entry) => (
+            <article className={`history-card ${entry.status}`} key={entry.id}>
+              <div className="history-icon" aria-hidden="true">
+                {entry.status === "success" ? (
+                  <CheckCircle2 size={18} />
+                ) : (
+                  <AlertCircle size={18} />
+                )}
+              </div>
+              <div className="history-main">
+                <strong>
+                  {entry.status === "success"
+                    ? `${entry.amount} XLM`
+                    : "Payment failed"}
+                </strong>
+                <span>
+                  {entry.recipientName} - {entry.groupName} - {entry.billName}
+                </span>
+                <p>{entry.message}</p>
+              </div>
+              <div className="history-meta">
+                <time dateTime={entry.createdAt}>
+                  {formatHistoryDate(entry.createdAt)}
+                </time>
+                {entry.hash && (
+                  <a
+                    className="hash-link compact-link"
+                    href={`${EXPLORER_BASE}/${entry.hash}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {shortKey(entry.hash)}
+                  </a>
+                )}
+              </div>
+            </article>
+          ))
+        )}
+      </div>
+    </section>
   );
 }
 
