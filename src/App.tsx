@@ -16,11 +16,11 @@ import {
   X,
 } from "lucide-react";
 import {
-  getAddress,
-  getNetworkDetails,
-  isConnected,
-  requestAccess,
-  signTransaction,
+  getAddress as freighterGetAddress,
+  getNetworkDetails as freighterGetNetworkDetails,
+  isConnected as freighterIsConnected,
+  requestAccess as freighterRequestAccess,
+  signTransaction as freighterSignTransaction,
 } from "@stellar/freighter-api";
 import {
   Asset,
@@ -62,6 +62,7 @@ type Notice = {
 };
 
 type RailTarget = "split" | "friends" | "wallet";
+type FreighterResult<T> = { ok: true; value: T } | { ok: false; message: string };
 
 const horizon = new Horizon.Server(HORIZON_URL);
 
@@ -121,6 +122,43 @@ function errorMessage(error: unknown) {
     if (candidate.message) return candidate.message;
   }
   return "Something went wrong.";
+}
+
+function freighterErrorMessage(error: unknown) {
+  const message = errorMessage(error);
+  if (message.includes("reading 'switch'") || message.includes('reading "switch"')) {
+    return "Freighter could not answer this request. Make sure the extension is enabled, refresh this page, and try again.";
+  }
+  return message;
+}
+
+async function safeFreighterCall<T>(
+  action: () => Promise<T>,
+  fallbackMessage: string,
+  timeoutMs = 2500,
+): Promise<FreighterResult<T>> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(
+          new Error(
+            "Freighter did not respond. Make sure the extension is installed and enabled.",
+          ),
+        );
+      }, timeoutMs);
+    });
+
+    return { ok: true, value: await Promise.race([action(), timeout]) };
+  } catch (error) {
+    const message = freighterErrorMessage(error);
+    return {
+      ok: false,
+      message: message === "Something went wrong." ? fallbackMessage : message,
+    };
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 function App() {
@@ -210,7 +248,16 @@ function App() {
   async function refreshNetworkAndBalance(address = publicKey) {
     if (!address) return;
     try {
-      const details = await getNetworkDetails();
+      const detailsResult = await safeFreighterCall(
+        () => freighterGetNetworkDetails(),
+        "Could not read the selected Freighter network.",
+      );
+      if (!detailsResult.ok) {
+        setWalletNotice({ type: "warning", message: detailsResult.message });
+        return;
+      }
+
+      const details = detailsResult.value;
       if (details.error) throw new Error(details.error.message);
       setNetworkName(details.network || "UNKNOWN");
 
@@ -249,7 +296,20 @@ function App() {
   async function restoreWallet() {
     setIsWalletBusy(true);
     try {
-      const installed = await isConnected();
+      const installedResult = await safeFreighterCall(
+        () => freighterIsConnected(),
+        "Could not check whether Freighter is installed.",
+      );
+      if (!installedResult.ok) {
+        setFreighterInstalled(false);
+        setWalletNotice({
+          type: "warning",
+          message: installedResult.message,
+        });
+        return;
+      }
+
+      const installed = installedResult.value;
       if (installed.error || !installed.isConnected) {
         setFreighterInstalled(false);
         setWalletNotice({
@@ -260,7 +320,16 @@ function App() {
       }
       setFreighterInstalled(true);
 
-      const addressResult = await getAddress();
+      const addressRequest = await safeFreighterCall(
+        () => freighterGetAddress(),
+        "Could not read your Freighter address.",
+      );
+      if (!addressRequest.ok) {
+        setWalletNotice({ type: "warning", message: addressRequest.message });
+        return;
+      }
+
+      const addressResult = addressRequest.value;
       const remembered = localStorage.getItem(STORAGE_KEY);
       const address = addressResult.address || remembered || "";
 
@@ -283,7 +352,20 @@ function App() {
     setIsWalletBusy(true);
     setWalletNotice({ type: "loading", message: "Waiting for Freighter..." });
     try {
-      const installed = await isConnected();
+      const installedResult = await safeFreighterCall(
+        () => freighterIsConnected(),
+        "Could not check whether Freighter is installed.",
+      );
+      if (!installedResult.ok) {
+        setFreighterInstalled(false);
+        setWalletNotice({
+          type: "warning",
+          message: installedResult.message,
+        });
+        return;
+      }
+
+      const installed = installedResult.value;
       if (installed.error || !installed.isConnected) {
         setFreighterInstalled(false);
         setWalletNotice({
@@ -294,7 +376,16 @@ function App() {
       }
       setFreighterInstalled(true);
 
-      const access = await requestAccess();
+      const accessResult = await safeFreighterCall(
+        () => freighterRequestAccess(),
+        "Could not request access from Freighter.",
+      );
+      if (!accessResult.ok) {
+        setWalletNotice({ type: "warning", message: accessResult.message });
+        return;
+      }
+
+      const access = accessResult.value;
       if (access.error) throw new Error(access.error.message);
 
       setPublicKey(access.address);
@@ -466,10 +557,17 @@ function App() {
         .setTimeout(30)
         .build();
 
-      const signed = await signTransaction(tx.toXDR(), {
-        networkPassphrase: Networks.TESTNET,
-        address: publicKey,
-      });
+      const signedResult = await safeFreighterCall(
+        () =>
+          freighterSignTransaction(tx.toXDR(), {
+            networkPassphrase: Networks.TESTNET,
+            address: publicKey,
+          }),
+        "Could not sign the transaction with Freighter.",
+      );
+      if (!signedResult.ok) throw new Error(signedResult.message);
+
+      const signed = signedResult.value;
       if (signed.error) throw new Error(signed.error.message);
 
       const signedTx = TransactionBuilder.fromXDR(
@@ -492,7 +590,12 @@ function App() {
   }
 
   useEffect(() => {
-    void restoreWallet();
+    if (localStorage.getItem(STORAGE_KEY)) {
+      setWalletNotice({
+        type: "idle",
+        message: "Reconnect Freighter to refresh your wallet.",
+      });
+    }
   }, []);
 
   useLayoutEffect(() => {
@@ -704,6 +807,37 @@ function App() {
             )}
           </div>
         </header>
+
+        <section className="metrics-strip" aria-label="Split summary">
+          <article className="metric-tile">
+            <Wallet size={18} />
+            <div>
+              <span>Balance</span>
+              <strong>{formatBalance(balance)} XLM</strong>
+            </div>
+          </article>
+          <article className="metric-tile">
+            <Clipboard size={18} />
+            <div>
+              <span>Groups</span>
+              <strong>{groups.length}</strong>
+            </div>
+          </article>
+          <article className="metric-tile">
+            <Users size={18} />
+            <div>
+              <span>Friends</span>
+              <strong>{groupFriends.length}</strong>
+            </div>
+          </article>
+          <article className="metric-tile accent">
+            <CircleDollarSign size={18} />
+            <div>
+              <span>Each</span>
+              <strong>{splitShareText} XLM</strong>
+            </div>
+          </article>
+        </section>
 
         <section className="dashboard-grid">
           <div className="visual-panel">
