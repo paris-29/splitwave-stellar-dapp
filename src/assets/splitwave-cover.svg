@@ -1,0 +1,49 @@
+<svg width="900" height="900" viewBox="0 0 900 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="900" height="900" fill="#07070B"/>
+  <rect x="42" y="48" width="816" height="804" rx="34" fill="#101015"/>
+  <path d="M128 219C229 100 386 81 526 139C688 206 785 366 733 520C685 664 529 741 367 719C213 697 77 585 79 424C80 348 93 260 128 219Z" fill="#00F5D4"/>
+  <path d="M197 189C291 112 444 118 571 196C714 283 768 442 696 573C626 701 459 753 306 696C164 643 78 507 105 354C117 286 151 226 197 189Z" fill="#FF2E93"/>
+  <path d="M180 285C265 203 408 186 541 243C677 301 746 429 708 558C671 683 529 766 372 747C218 728 112 617 113 477C113 404 131 333 180 285Z" fill="#B6FF3B"/>
+  <path d="M183 300C274 217 415 206 538 265C667 327 724 449 674 558C621 674 466 728 331 682C198 637 128 518 155 395C163 358 172 321 183 300Z" fill="#111118"/>
+  <g filter="url(#shadow)">
+    <rect x="304" y="146" width="292" height="586" rx="54" fill="#ECE9FF"/>
+    <rect x="326" y="178" width="248" height="522" rx="36" fill="#15151E"/>
+    <rect x="348" y="210" width="142" height="22" rx="11" fill="#00F5D4"/>
+    <rect x="348" y="258" width="196" height="84" rx="20" fill="#FF2E93"/>
+    <rect x="368" y="282" width="80" height="14" rx="7" fill="#07070B"/>
+    <rect x="368" y="310" width="132" height="10" rx="5" fill="#07070B"/>
+    <rect x="348" y="372" width="196" height="68" rx="18" fill="#B6FF3B"/>
+    <rect x="370" y="396" width="150" height="13" rx="6.5" fill="#07070B"/>
+    <rect x="348" y="471" width="83" height="92" rx="18" fill="#272733"/>
+    <rect x="461" y="471" width="83" height="92" rx="18" fill="#272733"/>
+    <circle cx="389.5" cy="506.5" r="23.5" fill="#00F5D4"/>
+    <circle cx="502.5" cy="506.5" r="23.5" fill="#FF2E93"/>
+    <rect x="348" y="604" width="196" height="40" rx="20" fill="#ECE9FF"/>
+  </g>
+  <g filter="url(#shadow)">
+    <circle cx="212" cy="229" r="71" fill="#ECE9FF"/>
+    <circle cx="212" cy="229" r="45" fill="#111118"/>
+    <path d="M212 177V281M160 229H264" stroke="#B6FF3B" stroke-width="24" stroke-linecap="round"/>
+  </g>
+  <g filter="url(#shadow)">
+    <circle cx="702" cy="262" r="64" fill="#111118"/>
+    <circle cx="702" cy="262" r="39" fill="#00F5D4"/>
+    <path d="M680 262H724" stroke="#111118" stroke-width="18" stroke-linecap="round"/>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="119" y="569" width="190" height="122" rx="28" transform="rotate(-11 119 569)" fill="#ECE9FF"/>
+    <rect x="150" y="596" width="102" height="16" rx="8" transform="rotate(-11 150 596)" fill="#111118"/>
+    <rect x="157" y="632" width="80" height="12" rx="6" transform="rotate(-11 157 632)" fill="#FF2E93"/>
+    <rect x="160" y="657" width="128" height="12" rx="6" transform="rotate(-11 160 657)" fill="#00F5D4"/>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="625" y="564" width="160" height="116" rx="28" transform="rotate(13 625 564)" fill="#111118"/>
+    <circle cx="673" cy="616" r="25" fill="#B6FF3B"/>
+    <circle cx="729" cy="629" r="25" fill="#FF2E93"/>
+  </g>
+  <defs>
+    <filter id="shadow" x="38" y="85" width="827" height="716" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="28" stdDeviation="24" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+</svg>
