@@ -2,6 +2,8 @@
 
 Splitwave is a Stellar testnet split-bill dApp for Level 1 White Belt. It connects a Freighter wallet, shows the connected account's XLM balance, funds the testnet account with Friendbot, calculates group split amounts, and sends a real XLM payment on Stellar testnet.
 
+Live : https://paris-29.github.io/splitwave-stellar-dapp/#split
+
 ## What it does
 
 - Connect and disconnect Freighter.
