@@ -41,6 +41,11 @@ select {
 
 button {
   cursor: pointer;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease,
+    background-color 180ms ease;
 }
 
 button:disabled {
@@ -184,10 +189,15 @@ a {
   border-radius: 8px;
   background: rgba(21, 21, 29, 0.92);
   box-shadow: 0 20px 56px rgba(0, 0, 0, 0.22);
+  will-change: transform;
 }
 
 .panel {
   padding: 18px;
+}
+
+.panel:hover {
+  transform: translateY(-1px);
 }
 
 .visual-panel {
@@ -196,6 +206,17 @@ a {
   min-height: 460px;
   grid-row: span 2;
   background: #101015;
+}
+
+.visual-panel::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+  background:
+    linear-gradient(115deg, transparent 0 38%, rgba(255, 255, 255, 0.12) 45%, transparent 52%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 26%);
+  mix-blend-mode: screen;
 }
 
 .visual-panel img {
@@ -269,6 +290,12 @@ a {
   padding: 0 14px;
   color: #07070b;
   font-weight: 850;
+}
+
+.icon-text:hover,
+.send-button:hover,
+.group-tab:hover {
+  transform: translateY(-1px);
 }
 
 .icon-text.primary,
@@ -416,6 +443,16 @@ select:focus {
   border-radius: 8px;
   padding: 10px;
   background: #101018;
+  transition:
+    border-color 180ms ease,
+    transform 180ms ease,
+    background-color 180ms ease;
+}
+
+.friend-card:hover,
+.request-card:hover {
+  border-color: rgba(0, 245, 212, 0.34);
+  background: #13131d;
 }
 
 .avatar {
@@ -529,13 +566,14 @@ select:focus {
   }
 
   .side-rail {
-    position: fixed;
+    position: sticky;
     z-index: 5;
-    inset: auto 12px 12px;
+    top: 8px;
     flex-direction: row;
     justify-content: center;
     width: auto;
     height: 58px;
+    margin: 8px 14px 0;
     border: 1px solid rgba(236, 233, 255, 0.12);
     border-radius: 8px;
     padding: 8px;
@@ -546,7 +584,7 @@ select:focus {
   }
 
   .workspace {
-    padding: 18px 14px 86px;
+    padding: 14px 14px 32px;
   }
 
   .topbar {
@@ -576,5 +614,16 @@ select:focus {
   .friend-add input:nth-child(2) {
     grid-column: 1 / -1;
     grid-row: 2;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }

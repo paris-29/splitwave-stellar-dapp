@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -32,6 +32,7 @@ import {
   StrKey,
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
+import gsap from "gsap";
 import coverArt from "./assets/splitwave-cover.svg";
 
 const HORIZON_URL = "https://horizon-testnet.stellar.org";
@@ -130,6 +131,9 @@ function errorMessage(error: unknown) {
 }
 
 function App() {
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const balanceValueRef = useRef<HTMLSpanElement | null>(null);
+  const previousBalanceRef = useRef<string | null>(null);
   const [publicKey, setPublicKey] = useState("");
   const [networkName, setNetworkName] = useState("TESTNET");
   const [balance, setBalance] = useState<string | null>(null);
@@ -176,6 +180,8 @@ function App() {
   const splitShareText = formatXlm(splitShare);
   const connected = Boolean(publicKey);
   const onTestnet = networkName === "TESTNET";
+  const prefersReducedMotion = () =>
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   async function refreshNetworkAndBalance(address = publicKey) {
     if (!address) return;
@@ -450,8 +456,142 @@ function App() {
     void restoreWallet();
   }, []);
 
+  useLayoutEffect(() => {
+    if (!shellRef.current || prefersReducedMotion()) return;
+
+    const context = gsap.context(() => {
+      const intro = gsap.timeline({
+        defaults: { duration: 0.58, ease: "power3.out" },
+      });
+
+      intro
+        .from(".topbar > *", { y: -18, stagger: 0.08 })
+        .from(".visual-panel", { y: 28, scale: 0.985 }, "-=0.18")
+        .from(".panel", { y: 26, stagger: 0.065 }, "-=0.34")
+        .from(
+          ".side-rail .brand-mark, .side-rail .rail-button",
+          { x: -16, stagger: 0.055 },
+          "-=0.62",
+        );
+
+      gsap.to(".visual-panel img", {
+        y: -12,
+        scale: 1.035,
+        duration: 5.5,
+        repeat: -1,
+        yoyo: true,
+        ease: "sine.inOut",
+      });
+
+      gsap.to(".brand-mark svg", {
+        rotate: 360,
+        transformOrigin: "50% 50%",
+        duration: 10,
+        repeat: -1,
+        ease: "none",
+      });
+
+      gsap.to(".share-chip, .network-pill", {
+        boxShadow: "0 0 18px rgba(182, 255, 59, 0.34)",
+        duration: 1.8,
+        repeat: -1,
+        yoyo: true,
+        ease: "sine.inOut",
+      });
+    }, shellRef);
+
+    return () => context.revert();
+  }, []);
+
+  useEffect(() => {
+    if (!balanceValueRef.current || prefersReducedMotion()) {
+      previousBalanceRef.current = balance;
+      return;
+    }
+
+    if (previousBalanceRef.current !== balance && balance !== null) {
+      gsap.fromTo(
+        balanceValueRef.current,
+        { scale: 1.045, color: "#00f5d4" },
+        {
+          scale: 1,
+          color: "#f4f3ff",
+          duration: 0.55,
+          ease: "elastic.out(1, 0.55)",
+        },
+      );
+    }
+
+    previousBalanceRef.current = balance;
+  }, [balance]);
+
+  useEffect(() => {
+    if (!shellRef.current || prefersReducedMotion()) return;
+
+    const targets = shellRef.current.querySelectorAll(
+      ".share-chip, .request-card, .visual-copy",
+    );
+
+    gsap.fromTo(
+      targets,
+      { scale: 0.985 },
+      { scale: 1, duration: 0.36, stagger: 0.035, ease: "back.out(2)" },
+    );
+  }, [splitShareText, participantCount, activeGroupId]);
+
+  useEffect(() => {
+    if (!shellRef.current || prefersReducedMotion()) return;
+
+    const sendPanel = shellRef.current.querySelector(".send-panel");
+    if (!sendPanel) return;
+
+    if (transactionNotice.type === "success") {
+      gsap
+        .timeline()
+        .to(sendPanel, {
+          borderColor: "rgba(182, 255, 59, 0.76)",
+          boxShadow: "0 0 0 1px rgba(182, 255, 59, 0.22), 0 20px 70px rgba(182, 255, 59, 0.14)",
+          duration: 0.2,
+          ease: "power2.out",
+        })
+        .to(sendPanel, {
+          boxShadow: "0 20px 56px rgba(0, 0, 0, 0.22)",
+          duration: 1,
+          ease: "power2.out",
+        });
+    }
+
+    if (transactionNotice.type === "error") {
+      gsap.fromTo(
+        sendPanel,
+        { x: -8 },
+        { x: 0, duration: 0.48, ease: "elastic.out(1, 0.35)" },
+      );
+    }
+  }, [transactionNotice.type]);
+
+  useEffect(() => {
+    if (!copiedRequestId || !shellRef.current || prefersReducedMotion()) return;
+
+    const request = shellRef.current.querySelector(
+      `[data-request-id="${copiedRequestId}"]`,
+    );
+    if (!request) return;
+
+    gsap.fromTo(
+      request,
+      { scale: 0.98, borderColor: "rgba(0, 245, 212, 0.72)" },
+      {
+        scale: 1,
+        borderColor: "rgba(236, 233, 255, 0.1)",
+        duration: 0.42,
+        ease: "back.out(2.4)",
+      },
+    );
+  }, [copiedRequestId]);
+
   return (
-    <div className="app-shell">
+    <div className="app-shell" ref={shellRef}>
       <aside className="side-rail">
         <div className="brand-mark">
           <Sparkles size={18} />
@@ -523,7 +663,7 @@ function App() {
             </div>
 
             <div className="balance-display">
-              <span>{formatBalance(balance)}</span>
+              <span ref={balanceValueRef}>{formatBalance(balance)}</span>
               <strong>XLM</strong>
             </div>
 
@@ -760,7 +900,11 @@ function App() {
                 <div className="empty-state">No friends in this group.</div>
               ) : (
                 groupFriends.map((friend) => (
-                  <article className="request-card" key={friend.id}>
+                  <article
+                    className="request-card"
+                    data-request-id={friend.id}
+                    key={friend.id}
+                  >
                     <div>
                       <strong>{friend.name}</strong>
                       <span>{splitShareText} XLM</span>

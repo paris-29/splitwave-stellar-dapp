@@ -11,6 +11,15 @@ Splitwave is a Stellar testnet split-bill dApp for Level 1 White Belt. It connec
 - Copy local split request messages.
 - Build, sign, and submit an XLM payment through Freighter.
 - Show success/failure feedback and the transaction hash.
+- Uses GSAP for page entrance, cover-art movement, balance pulses, split feedback, and transaction feedback motion.
+
+## White Belt checklist
+
+- Wallet setup: Freighter browser extension, Stellar testnet.
+- Wallet connection: connect and disconnect buttons.
+- Balance handling: Horizon account lookup and native XLM balance display.
+- Transaction flow: XLM payment operation, Freighter signature request, Horizon submission, success/error feedback, transaction hash link.
+- Development standards: typed React components, Stellar SDK transaction builder, Freighter API integration, error handling, local README, and GitHub Pages workflow.
 
 ## How the Web3 flow works
 
@@ -24,6 +33,8 @@ npm run dev
 ```
 
 Open the local URL from Vite, install the Freighter browser extension, switch Freighter to `TESTNET`, connect, and use `Fund testnet` if the account has no testnet XLM.
+
+No API key is required. The only credential needed later is GitHub auth if you want to publish the repo from the CLI.
 
 ## Build
 
