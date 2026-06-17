@@ -53,6 +53,11 @@ button:disabled {
   opacity: 0.55;
 }
 
+input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 a {
   color: inherit;
 }
@@ -194,6 +199,11 @@ a {
 
 .panel {
   padding: 18px;
+}
+
+.panel:focus {
+  outline: 2px solid rgba(0, 245, 212, 0.46);
+  outline-offset: 2px;
 }
 
 .panel:hover {

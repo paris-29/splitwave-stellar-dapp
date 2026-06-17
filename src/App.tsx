@@ -61,6 +61,8 @@ type Notice = {
   hash?: string;
 };
 
+type RailTarget = "split" | "friends" | "wallet";
+
 const horizon = new Horizon.Server(HORIZON_URL);
 
 function shortKey(key: string) {
@@ -123,6 +125,9 @@ function errorMessage(error: unknown) {
 
 function App() {
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const walletPanelRef = useRef<HTMLElement | null>(null);
+  const splitPanelRef = useRef<HTMLElement | null>(null);
+  const friendsPanelRef = useRef<HTMLElement | null>(null);
   const balanceValueRef = useRef<HTMLSpanElement | null>(null);
   const previousBalanceRef = useRef<string | null>(null);
   const [publicKey, setPublicKey] = useState("");
@@ -154,6 +159,7 @@ function App() {
   const [selectedRecipientId, setSelectedRecipientId] = useState("");
   const [sendAmount, setSendAmount] = useState("");
   const [copiedRequestId, setCopiedRequestId] = useState("");
+  const [activeRailTarget, setActiveRailTarget] = useState<RailTarget>("split");
 
   const activeGroup = useMemo(
     () => groups.find((group) => group.id === activeGroupId),
@@ -178,6 +184,28 @@ function App() {
   const onTestnet = networkName === "TESTNET";
   const prefersReducedMotion = () =>
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function railButtonClass(target: RailTarget) {
+    return activeRailTarget === target ? "rail-button active" : "rail-button";
+  }
+
+  function scrollToPanel(target: RailTarget) {
+    const panels: Record<RailTarget, HTMLElement | null> = {
+      split: splitPanelRef.current,
+      friends: friendsPanelRef.current,
+      wallet: walletPanelRef.current,
+    };
+    const panel = panels[target];
+    if (!panel) return;
+
+    setActiveRailTarget(target);
+    panel.scrollIntoView({
+      behavior: prefersReducedMotion() ? "auto" : "smooth",
+      block: "center",
+      inline: "nearest",
+    });
+    panel.focus({ preventScroll: true });
+  }
 
   async function refreshNetworkAndBalance(address = publicKey) {
     if (!address) return;
@@ -607,13 +635,34 @@ function App() {
         <div className="brand-mark">
           <Sparkles size={18} />
         </div>
-        <button className="rail-button active" aria-label="Split studio">
+        <button
+          className={railButtonClass("split")}
+          type="button"
+          onClick={() => scrollToPanel("split")}
+          aria-label="Go to split calculator"
+          aria-pressed={activeRailTarget === "split"}
+          title="Split calculator"
+        >
           <CircleDollarSign size={19} />
         </button>
-        <button className="rail-button" aria-label="Groups">
+        <button
+          className={railButtonClass("friends")}
+          type="button"
+          onClick={() => scrollToPanel("friends")}
+          aria-label="Go to friends"
+          aria-pressed={activeRailTarget === "friends"}
+          title="Friends"
+        >
           <Users size={19} />
         </button>
-        <button className="rail-button" aria-label="Wallet">
+        <button
+          className={railButtonClass("wallet")}
+          type="button"
+          onClick={() => scrollToPanel("wallet")}
+          aria-label="Go to wallet"
+          aria-pressed={activeRailTarget === "wallet"}
+          title="Wallet"
+        >
           <Wallet size={19} />
         </button>
       </aside>
@@ -666,7 +715,12 @@ function App() {
             </div>
           </div>
 
-          <section className="panel wallet-panel" aria-label="Wallet">
+          <section
+            className="panel wallet-panel"
+            aria-label="Wallet"
+            ref={walletPanelRef}
+            tabIndex={-1}
+          >
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Wallet</p>
@@ -724,7 +778,12 @@ function App() {
             </div>
           </section>
 
-          <section className="panel split-panel" aria-label="Split calculator">
+          <section
+            className="panel split-panel"
+            aria-label="Split calculator"
+            ref={splitPanelRef}
+            tabIndex={-1}
+          >
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Split</p>
@@ -794,7 +853,12 @@ function App() {
             </div>
           </section>
 
-          <section className="panel friends-panel" aria-label="Friends">
+          <section
+            className="panel friends-panel"
+            aria-label="Friends"
+            ref={friendsPanelRef}
+            tabIndex={-1}
+          >
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Friends</p>
@@ -841,13 +905,21 @@ function App() {
                 onChange={(event) => setNewFriendName(event.target.value)}
                 placeholder="Friend name"
                 maxLength={24}
+                disabled={!activeGroup}
               />
               <input
                 value={newFriendWallet}
                 onChange={(event) => setNewFriendWallet(event.target.value)}
                 placeholder="Optional G... wallet"
+                disabled={!activeGroup}
               />
-              <button className="icon-only" onClick={addFriend} aria-label="Add friend" title="Add friend">
+              <button
+                className="icon-only"
+                onClick={addFriend}
+                aria-label="Add friend"
+                title={activeGroup ? "Add friend" : "Create a group first"}
+                disabled={!activeGroup}
+              >
                 <Plus size={18} />
               </button>
             </div>
