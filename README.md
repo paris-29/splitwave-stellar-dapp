@@ -2,7 +2,7 @@
 
 Splitwave turns daily bills into a Stellar testnet bill room. Level 2 adds a multi-wallet connect surface, a Soroban smart contract for bill progress, frontend contract calls, live event polling, and visible transaction stages.
 
-Live: https://paris-29.github.io/splitwave-stellar-dapp/
+Live: https://splitwave-stellar-dapp.pages.dev/
 
 ## Level 2 Scope
 
