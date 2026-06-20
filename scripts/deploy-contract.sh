@@ -11,14 +11,19 @@ if ! command -v stellar >/dev/null 2>&1; then
   exit 1
 fi
 
-stellar keys generate --global "$ACCOUNT_NAME" --network "$NETWORK" --fund >/dev/null 2>&1 || true
+if ! stellar keys public-key "$ACCOUNT_NAME" >/dev/null 2>&1; then
+  stellar keys generate --fund "$ACCOUNT_NAME" \
+    --network "$NETWORK" \
+    --rpc-url "$RPC_URL" \
+    --network-passphrase "$NETWORK_PASSPHRASE"
+fi
 
 pushd contracts/splitwave_bills >/dev/null
 stellar contract build
 CONTRACT_ID="$(
   stellar contract deploy \
     --wasm target/wasm32v1-none/release/splitwave_bills.wasm \
-    --source "$ACCOUNT_NAME" \
+    --source-account "$ACCOUNT_NAME" \
     --network "$NETWORK" \
     --rpc-url "$RPC_URL" \
     --network-passphrase "$NETWORK_PASSPHRASE"

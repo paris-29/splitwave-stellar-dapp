@@ -1,5 +1,7 @@
 node_modules
 dist
+target
+contracts/**/target
 .DS_Store
 *.local
 .env

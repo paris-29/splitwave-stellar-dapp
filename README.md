@@ -1,42 +1,28 @@
-# Splitwave
+# Splitwave Yellow Belt
 
-Splitwave is a Stellar testnet split-bill dApp for Level 1 White Belt. It connects a Freighter wallet, shows the connected account's XLM balance, funds the testnet account with Friendbot, calculates group split amounts, and sends a real XLM payment on Stellar testnet.
+Splitwave turns daily bills into a Stellar testnet bill room. Level 2 adds a multi-wallet connect surface, a Soroban smart contract for bill progress, frontend contract calls, live event polling, and visible transaction stages.
 
-Live : https://paris-29.github.io/splitwave-stellar-dapp/#split
+Live: https://paris-29.github.io/splitwave-stellar-dapp/
 
-## What it does
+## Level 2 Scope
 
-- Connect and disconnect Freighter.
-- Enforce Stellar `TESTNET` for funding and payments.
-- Fetch and display the connected wallet's native XLM balance.
-- Start from a clean empty state, then add local groups and friends for a bill split.
-- Copy local split request messages.
-- Build, sign, and submit an XLM payment through Freighter.
-- Show success/failure feedback and the transaction hash.
-- Uses GSAP for page entrance, cover-art movement, balance pulses, split feedback, and transaction feedback motion.
+- Multi-wallet UI backed by `src/stellar/walletKit.ts`, with Freighter as the working signer and optional `@creit.tech/stellar-wallets-kit` dynamic loading when that package is installed.
+- Error routes for wallet not found, rejected wallet requests, and insufficient testnet XLM.
+- Soroban contract source at `contracts/splitwave_bills`.
+- Frontend contract writes for bill goals and payment records.
+- Contract reads for bill summary state.
+- RPC event polling for live `bill` and `pay` events.
+- Transaction status rail: simulate, sign, submit, pending, success, failed.
+- Maximalist Yellow Belt UI with the onboarding line `Web3 into Daily Bills`.
 
-## White Belt checklist
-
-- Wallet setup: Freighter browser extension, Stellar testnet.
-- Wallet connection: connect and disconnect buttons.
-- Balance handling: Horizon account lookup and native XLM balance display.
-- Transaction flow: XLM payment operation, Freighter signature request, Horizon submission, success/error feedback, transaction hash link.
-- Development standards: typed React components, Stellar SDK transaction builder, Freighter API integration, error handling, local README, and GitHub Pages workflow.
-
-## How the Web3 flow works
-
-The app never sees a secret key. Freighter owns the account keys. Splitwave asks Freighter for the public wallet address, loads that account from Horizon, builds a testnet payment transaction, sends the unsigned transaction XDR to Freighter, and submits the signed XDR back to Stellar Horizon.
-
-## Run locally
+## Run Locally
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open the local URL from Vite. If Freighter is not installed, the app shows an install button. After installing Freighter, switch it to `TESTNET`, connect, and use `Fund testnet` if the account has no testnet XLM.
-
-No API key is required. The only credential needed later is GitHub auth if you want to publish the repo from the CLI.
+Open the Vite URL, connect Freighter on `TESTNET`, and use Friendbot from the wallet screen if the account has no testnet XLM.
 
 ## Build
 
@@ -44,25 +30,51 @@ No API key is required. The only credential needed later is GitHub auth if you w
 npm run build
 ```
 
-## Publish and deploy
+## Smart Contract
 
-The repo includes a GitHub Pages workflow. After GitHub auth is fixed, publish it with:
+The contract stores a bill summary and per-wallet payment records.
 
 ```bash
-gh repo create splitwave-stellar-dapp --public --source=. --remote=origin --push
+contracts/splitwave_bills
+├── Cargo.toml
+└── src/lib.rs
 ```
 
-In the GitHub repo settings, set Pages to deploy from GitHub Actions. Every push to `main` will build and deploy the app.
+Methods:
 
-## Screenshots
+- `upsert_bill(owner, id, title, target)` writes a bill goal and emits a `bill` event.
+- `record_payment(bill_id, from, amount, memo)` records a payment amount and emits a `pay` event.
+- `summary(bill_id)` reads current bill state.
+- `contribution(bill_id, from)` reads one wallet's contribution.
 
-Add final screenshots after running the app with Freighter:
+## Deploy To Testnet
 
-- `docs/screenshots/wallet-connected.png` - wallet connected state.
-- `docs/screenshots/balance-displayed.png` - XLM balance displayed.
-- `docs/screenshots/transaction-success.png` - successful testnet transaction.
-- `docs/screenshots/transaction-result.png` - transaction hash/result shown in the UI.
+Install the Stellar CLI, then run:
+
+```bash
+./scripts/deploy-contract.sh splitwave-yellow
+```
+
+Add the printed values to `.env.local`:
+
+```bash
+VITE_SPLITWAVE_CONTRACT_ID=CAOLLM2HMYVVFNKBFJBQNZ27I6OVANUJFX5JKVVFYVHUEO2KGDYVEBBW
+VITE_STELLAR_RPC_URL=https://soroban-testnet.stellar.org
+VITE_SPLITWAVE_DEPLOY_TX=d0dcd222d991455156809a77892108d8c7bee7835e02effc1da2c6b13969c725
+```
+
+Restart `npm run dev` after changing env vars. The contract ID can also be pasted into the Contract screen.
+
+## Submission Fields
+
+- Public repo: `https://github.com/paris-29/splitwave-stellar-dapp`
+- Contract address: `CAOLLM2HMYVVFNKBFJBQNZ27I6OVANUJFX5JKVVFYVHUEO2KGDYVEBBW`
+- Contract deployment tx: `d0dcd222d991455156809a77892108d8c7bee7835e02effc1da2c6b13969c725`
+- Contract call tx: `60e78c05947b02a8fb80839a94a5e2123009a5a0af0ac761970714956a50185b`
+- Payment event call tx: `1643c4d44c7f7e2af981e4cf5970abcaf0c365260557a773bf6a77e781f10af9`
+- Wallet options screenshot: `docs/screenshots/wallet-options-yellow-belt.png`.
+- Live demo: optional.
 
 ## Notes
 
-Friend and group requests are local UI records for this beginner project. A production request inbox would need a backend, wallet-to-wallet messaging, or a contract/indexer-backed notification flow.
+The app does not handle private keys. Wallets sign XDR from the browser wallet layer; the frontend submits signed Soroban transactions through Stellar RPC and polls for final status.
