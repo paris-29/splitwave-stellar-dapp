@@ -27,9 +27,15 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Horizon, StrKey } from "@stellar/stellar-sdk";
 import gsap from "gsap";
 import coverArt from "./assets/splitwave-cover.svg";
+import {
+  contractDataKeys,
+  useBillSummaryQuery,
+  useContractEventsQuery,
+} from "./hooks/useContractData";
 import {
   CONTRACT_DEPLOYMENT_TX,
   CONTRACT_ID,
@@ -39,9 +45,7 @@ import {
   TESTNET_EXPLORER,
 } from "./stellar/config";
 import {
-  fetchContractEvents,
   isValidContractId,
-  readBillSummary,
   recordPaymentOnContract,
   stroopsToXlm,
   type BillSummary,
@@ -154,6 +158,13 @@ function formatDate(value: string) {
   }).format(date);
 }
 
+function xlmToStroops(value: string) {
+  const normalized = value.trim();
+  if (!/^\d+(\.\d{0,7})?$/.test(normalized)) return null;
+  const [whole, fraction = ""] = normalized.split(".");
+  return BigInt(whole) * 10_000_000n + BigInt(fraction.padEnd(7, "0"));
+}
+
 function emptySummary(billId: string): BillSummary {
   return {
     id: billId,
@@ -200,6 +211,7 @@ function participantWalletValid(wallet: string) {
 }
 
 function App() {
+  const queryClient = useQueryClient();
   const shellRef = useRef<HTMLDivElement | null>(null);
   const heroRef = useRef<HTMLDivElement | null>(null);
   const [onboarded, setOnboarded] = useState(readOnboardingState);
@@ -230,10 +242,6 @@ function App() {
     DEFAULT_PARTICIPANTS,
   );
   const [newParticipant, setNewParticipant] = useState("");
-  const [summary, setSummary] = useState<BillSummary>(() =>
-    emptySummary("daily-bills-yellow"),
-  );
-  const [events, setEvents] = useState<ContractEvent[]>([]);
   const [txStage, setTxStage] = useState<ContractTxStage>("idle");
   const [lastSync, setLastSync] = useState("");
   const [activity, setActivity] = useState<ActivityItem[]>([
@@ -249,6 +257,23 @@ function App() {
   const connected = Boolean(wallet);
   const onTestnet = networkName === "TESTNET";
   const validContract = isValidContractId(contractId);
+  const normalizedBillId = billId.trim() || "daily-bills-yellow";
+  const sourceAddress = wallet?.address || "";
+  const summaryQuery = useBillSummaryQuery({
+    contractId,
+    sourceAddress,
+    billId: normalizedBillId,
+    enabled: connected && onTestnet && validContract,
+  });
+  const eventsQuery = useContractEventsQuery({
+    contractId,
+    enabled: validContract,
+  });
+  const summary = summaryQuery.data ?? emptySummary(normalizedBillId);
+  const events = eventsQuery.data ?? [];
+  const summaryLoading = summaryQuery.isLoading;
+  const eventsLoading = eventsQuery.isLoading;
+  const contractFetching = summaryQuery.isFetching || eventsQuery.isFetching;
   const percent = progress(summary);
   const missingContract = !contractId.trim();
   const canWriteContract =
@@ -265,17 +290,29 @@ function App() {
     () => [
       {
         label: "Synced paid",
-        value: `${stroopsToXlm(summary.paid)} XLM`,
+        value: summaryLoading ? (
+          <SkeletonText width="6.5rem" />
+        ) : (
+          `${stroopsToXlm(summary.paid)} XLM`
+        ),
         icon: <CircleDollarSign size={19} />,
       },
       {
         label: "Goal",
-        value: `${stroopsToXlm(summary.target)} XLM`,
+        value: summaryLoading ? (
+          <SkeletonText width="5.5rem" />
+        ) : (
+          `${stroopsToXlm(summary.target)} XLM`
+        ),
         icon: <Gauge size={19} />,
       },
       {
         label: "People",
-        value: `${Math.max(summary.contributors, participants.length)}`,
+        value: summaryLoading ? (
+          <SkeletonText width="3.5rem" />
+        ) : (
+          `${Math.max(summary.contributors, participants.length)}`
+        ),
         icon: <UserRound size={19} />,
       },
       {
@@ -284,7 +321,7 @@ function App() {
         icon: <Radio size={19} />,
       },
     ],
-    [participants.length, summary, txStage],
+    [participants.length, summary, summaryLoading, txStage],
   );
 
   function prefersReducedMotion() {
@@ -406,13 +443,9 @@ function App() {
   async function refreshContractState() {
     if (!wallet || !validContract) return;
     try {
-      const nextSummary = await readBillSummary(
-        contractId,
-        wallet.address,
-        billId.trim() || "daily-bills-yellow",
-      );
-      setSummary(nextSummary);
-      setBillTitle(nextSummary.title || billTitle);
+      const result = await summaryQuery.refetch();
+      if (result.error) throw result.error;
+      if (result.data?.title) setBillTitle(result.data.title);
       setLastSync(new Date().toISOString());
       setContractNotice({
         type: "success",
@@ -426,14 +459,65 @@ function App() {
   async function refreshEvents() {
     if (!validContract) return;
     try {
-      const nextEvents = await fetchContractEvents(contractId);
-      setEvents(nextEvents);
+      const result = await eventsQuery.refetch();
+      if (result.error) throw result.error;
       setLastSync(new Date().toISOString());
     } catch (error) {
       if (contractId.trim()) {
         setContractNotice(noticeFromError(error, "Event sync failed."));
       }
     }
+  }
+
+  function applyOptimisticSummary(
+    update: (current: BillSummary) => BillSummary,
+  ) {
+    if (!wallet) return () => {};
+    const key = contractDataKeys.summary(contractId, wallet.address, normalizedBillId);
+    const previous = queryClient.getQueryData<BillSummary>(key);
+
+    queryClient.setQueryData<BillSummary>(key, (current) =>
+      update(current ?? summary),
+    );
+
+    return () => {
+      if (previous) {
+        queryClient.setQueryData(key, previous);
+      } else {
+        queryClient.removeQueries({ queryKey: key, exact: true });
+      }
+    };
+  }
+
+  function cacheSubmittedEvent({
+    topic,
+    amountXlm,
+    hash,
+    ledger,
+    actor,
+  }: {
+    topic: string;
+    amountXlm: string;
+    hash: string;
+    ledger: number;
+    actor: string;
+  }) {
+    queryClient.setQueryData<ContractEvent[]>(
+      contractDataKeys.events(contractId),
+      (current = []) => [
+        {
+          id: `submitted-${hash}-${topic}`,
+          txHash: hash,
+          ledger,
+          closedAt: new Date().toISOString(),
+          topic,
+          billId: normalizedBillId,
+          actor,
+          amountXlm,
+        },
+        ...current.filter((event) => event.txHash !== hash),
+      ].slice(0, 20),
+    );
   }
 
   async function saveBillToContract() {
@@ -454,14 +538,35 @@ function App() {
       message: "Preparing contract bill update...",
     });
 
+    let rollbackOptimistic = () => {};
+
     try {
+      const nextTitle = billTitle.trim() || "Daily bill";
+      const optimisticTarget = xlmToStroops(targetXlm);
+      if (optimisticTarget && optimisticTarget > 0n) {
+        rollbackOptimistic = applyOptimisticSummary((current) => ({
+          ...current,
+          id: normalizedBillId,
+          title: nextTitle,
+          target: optimisticTarget,
+          updatedLedger: current.updatedLedger,
+        }));
+      }
+
       const result = await upsertBillOnContract({
         contractId,
         wallet,
-        billId: billId.trim() || "daily-bills-yellow",
-        title: billTitle.trim() || "Daily bill",
+        billId: normalizedBillId,
+        title: nextTitle,
         targetXlm,
         onStage: setTxStage,
+      });
+      cacheSubmittedEvent({
+        topic: "bill",
+        amountXlm: targetXlm,
+        hash: result.hash,
+        ledger: Number(result.ledger),
+        actor: wallet.address,
       });
       setContractNotice({
         type: "success",
@@ -476,6 +581,7 @@ function App() {
       });
       await Promise.all([refreshWallet(wallet.address), refreshContractState(), refreshEvents()]);
     } catch (error) {
+      rollbackOptimistic();
       setTxStage("failed");
       setContractNotice(noticeFromError(error, "Contract write failed."));
       pushActivity({
@@ -506,15 +612,35 @@ function App() {
       message: "Preparing payment event...",
     });
 
+    let rollbackOptimistic = () => {};
+
     try {
+      const optimisticAmount = xlmToStroops(paymentXlm);
+      if (optimisticAmount && optimisticAmount > 0n) {
+        rollbackOptimistic = applyOptimisticSummary((current) => ({
+          ...current,
+          id: normalizedBillId,
+          paid: current.paid + optimisticAmount,
+          contributors: current.contributors > 0 ? current.contributors : 1,
+          updatedLedger: current.updatedLedger,
+        }));
+      }
+
       const result = await recordPaymentOnContract({
         contractId,
         wallet,
         balanceXlm: balance,
-        billId: billId.trim() || "daily-bills-yellow",
+        billId: normalizedBillId,
         amountXlm: paymentXlm,
         memo: paymentMemo,
         onStage: setTxStage,
+      });
+      cacheSubmittedEvent({
+        topic: "pay",
+        amountXlm: paymentXlm,
+        hash: result.hash,
+        ledger: Number(result.ledger),
+        actor: wallet.address,
       });
       setContractNotice({
         type: "success",
@@ -529,6 +655,7 @@ function App() {
       });
       await Promise.all([refreshWallet(wallet.address), refreshContractState(), refreshEvents()]);
     } catch (error) {
+      rollbackOptimistic();
       setTxStage("failed");
       setContractNotice(noticeFromError(error, "Payment write failed."));
       pushActivity({
@@ -597,14 +724,23 @@ function App() {
   }, [contractId]);
 
   useEffect(() => {
-    if (!validContract) return;
-    refreshEvents();
-    const timer = window.setInterval(() => {
-      refreshEvents();
-      if (wallet) refreshContractState();
-    }, 7500);
-    return () => window.clearInterval(timer);
-  }, [contractId, validContract, wallet?.address, billId]);
+    const syncedAt = Math.max(summaryQuery.dataUpdatedAt, eventsQuery.dataUpdatedAt);
+    if (syncedAt > 0) setLastSync(new Date(syncedAt).toISOString());
+  }, [summaryQuery.dataUpdatedAt, eventsQuery.dataUpdatedAt]);
+
+  useEffect(() => {
+    if (summaryQuery.data?.title) setBillTitle(summaryQuery.data.title);
+  }, [summaryQuery.data?.title]);
+
+  useEffect(() => {
+    if (summaryQuery.error) {
+      setContractNotice(noticeFromError(summaryQuery.error, "Contract sync failed."));
+      return;
+    }
+    if (eventsQuery.error && contractId.trim()) {
+      setContractNotice(noticeFromError(eventsQuery.error, "Event sync failed."));
+    }
+  }, [contractId, eventsQuery.error, summaryQuery.error]);
 
   useLayoutEffect(() => {
     if (!shellRef.current || prefersReducedMotion()) return;
@@ -648,9 +784,13 @@ function App() {
     gsap.fromTo(
       heroRef.current.querySelector(".progress-fill"),
       { scaleX: 0 },
-      { scaleX: percent / 100, duration: 0.8, ease: "power3.out" },
+      {
+        scaleX: summaryLoading ? 0 : percent / 100,
+        duration: 0.8,
+        ease: "power3.out",
+      },
     );
-  }, [percent]);
+  }, [percent, summaryLoading]);
 
   return (
     <div className="yellow-shell" ref={shellRef}>
@@ -724,20 +864,31 @@ function App() {
             <img src={coverArt} alt="" />
             <div className="sticker-stack">
               <span className="sticker lime">LIVE</span>
-              <span className="sticker pink">{percent}%</span>
+              <span className="sticker pink">{summaryLoading ? "SYNC" : `${percent}%`}</span>
               <span className="sticker cyan">TESTNET</span>
             </div>
           </div>
 
           <div className="progress-rack" aria-label="Bill progress">
             <div>
-              <span>{stroopsToXlm(summary.paid)} XLM</span>
-              <strong>{summary.title}</strong>
+              {summaryLoading ? (
+                <SkeletonText width="7rem" />
+              ) : (
+                <span>{stroopsToXlm(summary.paid)} XLM</span>
+              )}
+              {summaryLoading ? (
+                <SkeletonText width="12rem" />
+              ) : (
+                <strong>{summary.title}</strong>
+              )}
             </div>
             <div className="progress-track">
-              <span className="progress-fill" style={{ transform: `scaleX(${percent / 100})` }} />
+              <span
+                className="progress-fill"
+                style={{ transform: `scaleX(${summaryLoading ? 0 : percent / 100})` }}
+              />
             </div>
-            <p>{percent}% settled</p>
+            <p>{summaryLoading ? <SkeletonText width="5rem" /> : `${percent}% settled`}</p>
           </div>
         </section>
 
@@ -799,6 +950,7 @@ function App() {
               validContract={validContract}
               rpcUrl={RPC_URL}
               deploymentLink={deploymentLink}
+              fetching={contractFetching}
               onContractId={setContractId}
               onRefresh={() => {
                 refreshContractState();
@@ -818,7 +970,11 @@ function App() {
 
         {screen === "live" && (
           <section className="screen-grid live-grid">
-            <LiveEventsPanel events={events} />
+            <LiveEventsPanel
+              events={events}
+              loading={eventsLoading}
+              refreshing={eventsQuery.isFetching && !eventsLoading}
+            />
             <ActivityPanel activity={activity} />
           </section>
         )}
@@ -1171,6 +1327,7 @@ function ContractPanel({
   validContract,
   rpcUrl,
   deploymentLink,
+  fetching,
   onContractId,
   onRefresh,
 }: {
@@ -1178,6 +1335,7 @@ function ContractPanel({
   validContract: boolean;
   rpcUrl: string;
   deploymentLink: string;
+  fetching: boolean;
   onContractId: (value: string) => void;
   onRefresh: () => void;
 }) {
@@ -1222,7 +1380,7 @@ function ContractPanel({
 
       <div className="action-row">
         <button className="icon-text secondary" type="button" onClick={onRefresh}>
-          <RefreshCcw size={18} />
+          {fetching ? <Loader2 className="spin" size={18} /> : <RefreshCcw size={18} />}
           Sync
         </button>
         {deploymentLink && (
@@ -1236,19 +1394,29 @@ function ContractPanel({
   );
 }
 
-function LiveEventsPanel({ events }: { events: ContractEvent[] }) {
+function LiveEventsPanel({
+  events,
+  loading,
+  refreshing,
+}: {
+  events: ContractEvent[];
+  loading: boolean;
+  refreshing: boolean;
+}) {
   return (
     <section className="panel-band live-panel" aria-label="Live contract events">
       <div className="panel-heading">
         <div>
           <p className="eyebrow">Live events</p>
-          <h2>{events.length} signals</h2>
+          <h2>{loading ? "Syncing" : `${events.length} signals`}</h2>
         </div>
-        <BellRing size={22} />
+        {refreshing ? <Loader2 className="spin" size={22} /> : <BellRing size={22} />}
       </div>
 
       <div className="event-stream">
-        {events.length === 0 ? (
+        {loading ? (
+          <EventSkeletons />
+        ) : events.length === 0 ? (
           <div className="empty-state">Waiting for contract events.</div>
         ) : (
           events.map((event) => (
@@ -1268,6 +1436,23 @@ function LiveEventsPanel({ events }: { events: ContractEvent[] }) {
         )}
       </div>
     </section>
+  );
+}
+
+function EventSkeletons() {
+  return (
+    <>
+      {Array.from({ length: 3 }).map((_, index) => (
+        <article className="event-row skeleton-event" key={index}>
+          <div className="event-beat skeleton-block" />
+          <div>
+            <SkeletonText width="10rem" />
+            <SkeletonText width="7rem" />
+          </div>
+          <SkeletonText width="5.5rem" />
+        </article>
+      ))}
+    </>
   );
 }
 
@@ -1510,6 +1695,16 @@ function StatusNotice({ notice }: { notice: Notice }) {
       {notice.type === "idle" && <span className="status-dot" />}
       <span>{notice.message}</span>
     </div>
+  );
+}
+
+function SkeletonText({ width }: { width: string }) {
+  return (
+    <span
+      className="skeleton-line"
+      style={{ "--skeleton-width": width } as React.CSSProperties}
+      aria-hidden="true"
+    />
   );
 }
 

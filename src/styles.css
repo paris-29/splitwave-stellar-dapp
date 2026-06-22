@@ -1012,9 +1012,51 @@ select:focus {
   animation: spin 0.85s linear infinite;
 }
 
+.skeleton-line,
+.skeleton-block {
+  display: block;
+  overflow: hidden;
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, transparent, rgba(249, 247, 255, 0.14), transparent),
+    rgba(249, 247, 255, 0.08);
+  background-size:
+    220px 100%,
+    auto;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+.skeleton-line {
+  width: min(var(--skeleton-width), 100%);
+  height: 0.92em;
+}
+
+.progress-rack .skeleton-line,
+.metric-tile .skeleton-line {
+  margin: 3px 0;
+}
+
+.skeleton-event .event-beat {
+  background: rgba(249, 247, 255, 0.08);
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position:
+      -220px 0,
+      0 0;
+  }
+
+  to {
+    background-position:
+      220px 0,
+      0 0;
   }
 }
 
