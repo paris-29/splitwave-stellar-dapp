@@ -2,6 +2,7 @@ node_modules
 dist
 target
 contracts/**/target
+contracts/**/test_snapshots
 .DS_Store
 *.local
 .env
