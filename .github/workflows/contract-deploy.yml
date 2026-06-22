@@ -1,0 +1,43 @@
+name: Deploy Soroban Contract
+
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "Stellar network alias"
+        default: "testnet"
+        required: true
+      rpc_url:
+        description: "Stellar RPC URL"
+        default: "https://soroban-testnet.stellar.org"
+        required: true
+
+jobs:
+  deploy-contract:
+    runs-on: ubuntu-latest
+    environment: testnet
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli
+
+      - name: Deploy Splitwave bills contract
+        env:
+          STELLAR_NETWORK: ${{ inputs.network }}
+          STELLAR_RPC_URL: ${{ inputs.rpc_url }}
+          STELLAR_SOURCE_ACCOUNT: ${{ secrets.STELLAR_SOURCE_ACCOUNT }}
+        run: |
+          if [ -z "${STELLAR_SOURCE_ACCOUNT:-}" ]; then
+            echo "Set the STELLAR_SOURCE_ACCOUNT repository secret to a funded testnet secret key." >&2
+            exit 1
+          fi
+
+          ./scripts/deploy-contract.sh | tee deployment.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: splitwave-contract-deployment
+          path: deployment.txt
