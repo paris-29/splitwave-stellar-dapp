@@ -3,6 +3,7 @@ dist
 target
 contracts/**/target
 contracts/**/test_snapshots
+docs/demo/frames
 .DS_Store
 *.local
 .env

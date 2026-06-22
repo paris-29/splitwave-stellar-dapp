@@ -1,0 +1,18 @@
+ffconcat version 1.0
+file frames/slide-0.png
+duration 10
+file frames/slide-1.png
+duration 10
+file frames/slide-2.png
+duration 10
+file frames/slide-3.png
+duration 10
+file frames/slide-4.png
+duration 10
+file frames/slide-5.png
+duration 10
+file frames/slide-6.png
+duration 10
+file frames/slide-7.png
+duration 10
+file frames/slide-7.png

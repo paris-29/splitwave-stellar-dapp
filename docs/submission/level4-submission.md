@@ -50,6 +50,8 @@ Current local results:
 
 ## Demo Video
 
+Local video artifact: `docs/demo/level4-demo.mp4`
+
 Record a 1-2 minute walkthrough showing:
 
 - Connect wallet on testnet.
@@ -59,3 +61,5 @@ Record a 1-2 minute walkthrough showing:
 - Show GitHub Actions and test output.
 
 Demo video link: `TBD`
+
+Upload `docs/demo/level4-demo.mp4` to YouTube, Loom, Drive, or the submission form, then replace `TBD` with the public URL.

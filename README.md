@@ -110,6 +110,7 @@ For GitHub Actions deployment, add a funded testnet secret key as the `STELLAR_S
 - Wallet options screenshot: `docs/screenshots/wallet-options-yellow-belt.png`.
 - Mobile responsive screenshot: `docs/screenshots/mobile-responsive-level4.png`.
 - Test output screenshot: `docs/screenshots/test-output-level4.png`.
+- Demo video artifact: `docs/demo/level4-demo.mp4`.
 - Live demo: `https://splitwave-stellar-dapp.pages.dev/`
 - Architecture: `docs/architecture.md`
 - Submission checklist: `docs/submission/level4-submission.md`

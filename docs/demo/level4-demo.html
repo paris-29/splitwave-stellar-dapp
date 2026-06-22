@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Splitwave Level 4 Demo Slides</title>
+    <style>
+      :root {
+        color: #f9f7ff;
+        background: #050508;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        --lime: #b6ff3b;
+        --cyan: #00f5d4;
+        --pink: #ff2e93;
+        --yellow: #ffd166;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        width: 1280px;
+        height: 720px;
+        overflow: hidden;
+        background:
+          linear-gradient(90deg, rgba(255, 46, 147, 0.13) 1px, transparent 1px),
+          linear-gradient(0deg, rgba(0, 245, 212, 0.1) 1px, transparent 1px),
+          linear-gradient(135deg, #050508 0%, #111018 52%, #08070d 100%);
+        background-size:
+          42px 42px,
+          42px 42px,
+          auto;
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: minmax(0, 1.05fr) minmax(420px, 0.95fr);
+        gap: 38px;
+        width: 100%;
+        height: 100%;
+        padding: 58px;
+      }
+
+      section {
+        display: grid;
+        align-content: center;
+        gap: 22px;
+        min-width: 0;
+      }
+
+      .eyebrow {
+        margin: 0;
+        color: var(--lime);
+        font-size: 18px;
+        font-weight: 950;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 74px;
+        line-height: 0.92;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      h2 {
+        margin: 0;
+        color: var(--cyan);
+        font-size: 44px;
+        line-height: 1;
+        letter-spacing: 0;
+        text-transform: uppercase;
+        text-shadow: 4px 4px 0 var(--pink);
+      }
+
+      p,
+      li {
+        color: #d9d5e8;
+        font-size: 24px;
+        line-height: 1.35;
+      }
+
+      ul {
+        display: grid;
+        gap: 16px;
+        margin: 0;
+        padding-left: 28px;
+      }
+
+      code {
+        color: var(--yellow);
+        font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      }
+
+      .visual {
+        display: grid;
+        place-items: center;
+        min-width: 0;
+        border: 1px solid rgba(249, 247, 255, 0.16);
+        border-radius: 8px;
+        padding: 18px;
+        background:
+          linear-gradient(135deg, rgba(255, 46, 147, 0.12), transparent 48%),
+          rgba(20, 18, 25, 0.96);
+        box-shadow: 0 24px 90px rgba(0, 0, 0, 0.42);
+      }
+
+      .visual img {
+        display: block;
+        max-width: 100%;
+        max-height: 585px;
+        border: 1px solid rgba(249, 247, 255, 0.14);
+        border-radius: 8px;
+        object-fit: contain;
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+        width: 100%;
+      }
+
+      .metric {
+        min-height: 128px;
+        border: 1px solid rgba(249, 247, 255, 0.14);
+        border-radius: 8px;
+        padding: 18px;
+        background: #0d0b12;
+      }
+
+      .metric span {
+        display: block;
+        color: #b6b1c8;
+        font-size: 15px;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+
+      .metric strong {
+        display: block;
+        margin-top: 10px;
+        color: var(--cyan);
+        font-size: 34px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section>
+        <p class="eyebrow" id="eyebrow"></p>
+        <h1 id="title"></h1>
+        <h2 id="subtitle"></h2>
+        <ul id="bullets"></ul>
+      </section>
+      <aside class="visual" id="visual"></aside>
+    </main>
+
+    <script>
+      const slides = [
+        {
+          eyebrow: "Stellar Journey // Advanced",
+          title: "Splitwave",
+          subtitle: "Daily bills on Stellar",
+          bullets: [
+            "Multi-wallet bill room on Stellar testnet.",
+            "Soroban contract writes for bill goals and payments.",
+            "Live event stream with production loading states.",
+          ],
+          metrics: [
+            ["Live demo", "Pages"],
+            ["Contract", "Soroban"],
+            ["Network", "Testnet"],
+            ["UX", "Mobile"],
+          ],
+        },
+        {
+          eyebrow: "Mobile responsive UI",
+          title: "App first",
+          subtitle: "No landing-page detour",
+          bullets: [
+            "Wallet, record, and contract actions stay reachable on mobile.",
+            "Skeletons cover initial contract reads.",
+            "Status rail shows simulate, sign, submit, pending, and success.",
+          ],
+          image: "../screenshots/mobile-responsive-level4.png",
+        },
+        {
+          eyebrow: "Advanced contract logic",
+          title: "Inter-contract",
+          subtitle: "Rewards audit hook",
+          bullets: [
+            "<code>record_payment</code> stores the bill contribution.",
+            "<code>record_payment_with_rewards</code> calls an external <code>award</code> function.",
+            "<code>xpay</code> events distinguish cross-contract payments.",
+          ],
+          metrics: [
+            ["Entrypoint", "xpay"],
+            ["External call", "award"],
+            ["Auth", "wallet"],
+            ["Storage", "persistent"],
+          ],
+        },
+        {
+          eyebrow: "Real-time dashboard",
+          title: "Cached reads",
+          subtitle: "Stale while revalidate",
+          bullets: [
+            "React Query wraps summary and event reads.",
+            "Event cache keeps prior data visible during background refresh.",
+            "Writes optimistically update the dashboard before refetch.",
+          ],
+          metrics: [
+            ["Summary", "15s"],
+            ["Events", "7.5s"],
+            ["Cache", "keyed"],
+            ["Writes", "optimistic"],
+          ],
+        },
+        {
+          eyebrow: "Test coverage",
+          title: "15 tests",
+          subtitle: "Contracts plus frontend",
+          bullets: [
+            "10 Soroban tests cover success paths, failures, accumulation, and inter-contract calls.",
+            "5 frontend tests cover formatting, contract ID validation, and cache keys.",
+            "CI runs both suites before the production build.",
+          ],
+          image: "../screenshots/test-output-level4.png",
+        },
+        {
+          eyebrow: "CI/CD",
+          title: "Pipeline",
+          subtitle: "Build, test, deploy",
+          bullets: [
+            "<code>build.yml</code> runs cargo tests, Vitest, and Vite build.",
+            "<code>pages.yml</code> deploys the frontend.",
+            "<code>contract-deploy.yml</code> manually deploys the Soroban contract from a secret key.",
+          ],
+          metrics: [
+            ["Rust", "cargo test"],
+            ["Frontend", "npm test"],
+            ["Build", "vite"],
+            ["Deploy", "manual"],
+          ],
+        },
+        {
+          eyebrow: "Production docs",
+          title: "Submission",
+          subtitle: "Ready package",
+          bullets: [
+            "README includes live demo, contract address, tx hashes, and CI badge.",
+            "Architecture notes explain contracts, frontend, CI/CD, and deployment.",
+            "Submission checklist tracks screenshots and the video link.",
+          ],
+          metrics: [
+            ["README", "complete"],
+            ["Docs", "architecture"],
+            ["Screenshots", "included"],
+            ["Commits", "18+"],
+          ],
+        },
+        {
+          eyebrow: "Final step",
+          title: "Upload video",
+          subtitle: "Paste public link",
+          bullets: [
+            "This MP4 can be uploaded to YouTube, Loom, Drive, or the submission form.",
+            "After upload, replace <code>TBD</code> in the submission checklist with the public URL.",
+            "Push commits to trigger CI and capture the Actions screenshot.",
+          ],
+          metrics: [
+            ["Length", "80s"],
+            ["Format", "MP4"],
+            ["Audio", "captioned"],
+            ["Link", "upload"],
+          ],
+        },
+      ];
+
+      const params = new URLSearchParams(window.location.search);
+      const slide = slides[Number(params.get("slide") || 0)] || slides[0];
+      document.getElementById("eyebrow").textContent = slide.eyebrow;
+      document.getElementById("title").textContent = slide.title;
+      document.getElementById("subtitle").textContent = slide.subtitle;
+      document.getElementById("bullets").innerHTML = slide.bullets
+        .map((item) => `<li>${item}</li>`)
+        .join("");
+
+      const visual = document.getElementById("visual");
+      if (slide.image) {
+        visual.innerHTML = `<img src="${slide.image}" alt="" />`;
+      } else {
+        visual.innerHTML = `<div class="metric-grid">${slide.metrics
+          .map(([label, value]) => `<div class="metric"><span>${label}</span><strong>${value}</strong></div>`)
+          .join("")}</div>`;
+      }
+    </script>
+  </body>
+</html>
