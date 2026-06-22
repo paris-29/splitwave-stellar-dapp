@@ -41,6 +41,7 @@ import {
   CONTRACT_ID,
   FREIGHTER_INSTALL_URL,
   HORIZON_URL,
+  REWARDS_CONTRACT_ID,
   RPC_URL,
   TESTNET_EXPLORER,
 } from "./stellar/config";
@@ -68,6 +69,7 @@ import {
 const horizon = new Horizon.Server(HORIZON_URL);
 const WALLET_STORAGE_KEY = "splitwave:yellowWallet";
 const CONTRACT_STORAGE_KEY = "splitwave:contractId";
+const REWARDS_CONTRACT_STORAGE_KEY = "splitwave:rewardsContractId";
 const ONBOARDING_KEY = "splitwave:yellowOnboarding";
 
 type NoticeType = "idle" | "loading" | "success" | "warning" | "error";
@@ -119,6 +121,10 @@ function createId(prefix: string) {
 
 function readInitialContractId() {
   return localStorage.getItem(CONTRACT_STORAGE_KEY) || CONTRACT_ID;
+}
+
+function readInitialRewardsContractId() {
+  return localStorage.getItem(REWARDS_CONTRACT_STORAGE_KEY) || REWARDS_CONTRACT_ID;
 }
 
 function readOnboardingState() {
@@ -233,6 +239,9 @@ function App() {
   const [isWalletBusy, setIsWalletBusy] = useState(false);
   const [isContractBusy, setIsContractBusy] = useState(false);
   const [contractId, setContractId] = useState(readInitialContractId);
+  const [rewardsContractId, setRewardsContractId] = useState(
+    readInitialRewardsContractId,
+  );
   const [billId, setBillId] = useState("daily-bills-yellow");
   const [billTitle, setBillTitle] = useState("Neon apartment run");
   const [targetXlm, setTargetXlm] = useState("52");
@@ -257,6 +266,9 @@ function App() {
   const connected = Boolean(wallet);
   const onTestnet = networkName === "TESTNET";
   const validContract = isValidContractId(contractId);
+  const rewardsContract = rewardsContractId.trim();
+  const validRewardsContract =
+    !rewardsContract || isValidContractId(rewardsContract);
   const normalizedBillId = billId.trim() || "daily-bills-yellow";
   const sourceAddress = wallet?.address || "";
   const summaryQuery = useBillSummaryQuery({
@@ -277,7 +289,12 @@ function App() {
   const percent = progress(summary);
   const missingContract = !contractId.trim();
   const canWriteContract =
-    connected && onTestnet && validContract && !isContractBusy && !isWalletBusy;
+    connected &&
+    onTestnet &&
+    validContract &&
+    validRewardsContract &&
+    !isContractBusy &&
+    !isWalletBusy;
 
   const contractLink = validContract
     ? `${TESTNET_EXPLORER}/contract/${contractId}`
@@ -603,6 +620,14 @@ function App() {
       });
       return;
     }
+    if (!validRewardsContract) {
+      setScreen("contract");
+      setContractNotice({
+        type: "warning",
+        message: "Rewards contract ID must start with C... or stay blank.",
+      });
+      return;
+    }
 
     setIsContractBusy(true);
     setTxStage("simulate");
@@ -633,10 +658,11 @@ function App() {
         billId: normalizedBillId,
         amountXlm: paymentXlm,
         memo: paymentMemo,
+        rewardsContractId: validRewardsContract ? rewardsContract : "",
         onStage: setTxStage,
       });
       cacheSubmittedEvent({
-        topic: "pay",
+        topic: rewardsContract ? "xpay" : "pay",
         amountXlm: paymentXlm,
         hash: result.hash,
         ledger: Number(result.ledger),
@@ -722,6 +748,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem(CONTRACT_STORAGE_KEY, contractId);
   }, [contractId]);
+
+  useEffect(() => {
+    localStorage.setItem(REWARDS_CONTRACT_STORAGE_KEY, rewardsContractId);
+  }, [rewardsContractId]);
 
   useEffect(() => {
     const syncedAt = Math.max(summaryQuery.dataUpdatedAt, eventsQuery.dataUpdatedAt);
@@ -947,11 +977,14 @@ function App() {
           <section className="screen-grid contract-grid">
             <ContractPanel
               contractId={contractId}
+              rewardsContractId={rewardsContractId}
               validContract={validContract}
+              validRewardsContract={validRewardsContract}
               rpcUrl={RPC_URL}
               deploymentLink={deploymentLink}
               fetching={contractFetching}
               onContractId={setContractId}
+              onRewardsContractId={setRewardsContractId}
               onRefresh={() => {
                 refreshContractState();
                 refreshEvents();
@@ -1324,21 +1357,29 @@ function StatusConsole({
 
 function ContractPanel({
   contractId,
+  rewardsContractId,
   validContract,
+  validRewardsContract,
   rpcUrl,
   deploymentLink,
   fetching,
   onContractId,
+  onRewardsContractId,
   onRefresh,
 }: {
   contractId: string;
+  rewardsContractId: string;
   validContract: boolean;
+  validRewardsContract: boolean;
   rpcUrl: string;
   deploymentLink: string;
   fetching: boolean;
   onContractId: (value: string) => void;
+  onRewardsContractId: (value: string) => void;
   onRefresh: () => void;
 }) {
+  const rewardsEnabled = rewardsContractId.trim().length > 0;
+
   return (
     <section className="panel-band contract-panel" aria-label="Contract">
       <div className="panel-heading">
@@ -1359,6 +1400,16 @@ function ContractPanel({
         />
       </label>
 
+      <label>
+        <span>Rewards Contract ID</span>
+        <input
+          className={rewardsEnabled && !validRewardsContract ? "input-error" : ""}
+          value={rewardsContractId}
+          onChange={(event) => onRewardsContractId(event.target.value)}
+          placeholder="Optional C..."
+        />
+      </label>
+
       <div className="detail-grid">
         <div>
           <span>RPC</span>
@@ -1375,6 +1426,16 @@ function ContractPanel({
         <div>
           <span>Validity</span>
           <strong>{validContract ? "Ready" : "Needs C..."}</strong>
+        </div>
+        <div>
+          <span>Rewards</span>
+          <strong>
+            {rewardsEnabled
+              ? validRewardsContract
+                ? "Cross-contract"
+                : "Invalid"
+              : "Standard payments"}
+          </strong>
         </div>
       </div>
 

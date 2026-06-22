@@ -118,6 +118,19 @@ function contractArgs(
   ];
 }
 
+function rewardsContractArgs(
+  billId: string,
+  address: string,
+  amountStroops: bigint,
+  memo: string,
+  rewardsContractId: string,
+) {
+  return [
+    ...contractArgs(billId, address, amountStroops, memo),
+    new Address(assertContractId(rewardsContractId)).toScVal(),
+  ];
+}
+
 async function buildPreparedTransaction(
   source: string,
   contractId: string,
@@ -242,6 +255,7 @@ export async function recordPaymentOnContract({
   billId,
   amountXlm,
   memo,
+  rewardsContractId = "",
   onStage,
 }: {
   contractId: string;
@@ -250,6 +264,7 @@ export async function recordPaymentOnContract({
   billId: string;
   amountXlm: string;
   memo: string;
+  rewardsContractId?: string;
   onStage?: (stage: ContractTxStage) => void;
 }) {
   const id = assertContractId(contractId);
@@ -270,11 +285,16 @@ export async function recordPaymentOnContract({
   }
 
   onStage?.("simulate");
+  const rewardsId = rewardsContractId.trim();
+  const method = rewardsId ? "record_payment_with_rewards" : "record_payment";
+  const args = rewardsId
+    ? rewardsContractArgs(billId, wallet.address, amount, memo.slice(0, 64), rewardsId)
+    : contractArgs(billId, wallet.address, amount, memo.slice(0, 64));
   const prepared = await buildPreparedTransaction(
     wallet.address,
     id,
-    "record_payment",
-    contractArgs(billId, wallet.address, amount, memo.slice(0, 64)),
+    method,
+    args,
   );
 
   return submitPreparedContractTx(prepared, wallet, onStage);

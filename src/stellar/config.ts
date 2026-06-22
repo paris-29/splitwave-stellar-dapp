@@ -10,5 +10,8 @@ export const CONTRACT_DEPLOYMENT_TX = (
   import.meta.env.VITE_SPLITWAVE_DEPLOY_TX ||
   "d0dcd222d991455156809a77892108d8c7bee7835e02effc1da2c6b13969c725"
 ).trim();
+export const REWARDS_CONTRACT_ID = (
+  import.meta.env.VITE_SPLITWAVE_REWARDS_CONTRACT_ID || ""
+).trim();
 export const FREIGHTER_INSTALL_URL =
   "https://chromewebstore.google.com/detail/freighter/bcacfldlkkdogcmkkibnjlakofdplcbk";

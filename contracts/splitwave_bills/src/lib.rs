@@ -1,7 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String,
+    contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, Env, IntoVal,
+    String,
 };
 
 #[contracterror]
@@ -76,31 +77,36 @@ impl SplitwaveBills {
         amount: i128,
         memo: String,
     ) -> Result<BillSummary, Error> {
-        from.require_auth();
-
-        if amount <= 0 {
-            return Err(Error::AmountMustBePositive);
-        }
-
-        let bill_key = DataKey::Bill(bill_id.clone());
-        let payment_key = DataKey::Payment(bill_id.clone(), from.clone());
-        let mut summary = read_bill(&env, bill_id.clone());
-        let mut payment = read_payment(&env, bill_id.clone(), from.clone());
-
-        if payment.amount == 0 {
-            summary.contributors += 1;
-        }
-
-        payment.amount += amount;
-        payment.memo = memo;
-        payment.updated_ledger = env.ledger().sequence();
-        summary.paid += amount;
-        summary.updated_ledger = env.ledger().sequence();
-
-        env.storage().persistent().set(&payment_key, &payment);
-        env.storage().persistent().set(&bill_key, &summary);
+        let summary = write_payment(&env, bill_id.clone(), from.clone(), amount, memo)?;
         env.events()
             .publish((symbol_short!("pay"), bill_id, from), amount);
+
+        Ok(summary)
+    }
+
+    pub fn record_payment_with_rewards(
+        env: Env,
+        bill_id: String,
+        from: Address,
+        amount: i128,
+        memo: String,
+        rewards_contract: Address,
+    ) -> Result<BillSummary, Error> {
+        let summary = write_payment(&env, bill_id.clone(), from.clone(), amount, memo)?;
+
+        let _: u32 = env.invoke_contract(
+            &rewards_contract,
+            &symbol_short!("award"),
+            vec![
+                &env,
+                bill_id.clone().into_val(&env),
+                from.clone().into_val(&env),
+                amount.into_val(&env),
+            ],
+        );
+
+        env.events()
+            .publish((symbol_short!("xpay"), bill_id, from), amount);
 
         Ok(summary)
     }
@@ -112,6 +118,40 @@ impl SplitwaveBills {
     pub fn contribution(env: Env, bill_id: String, from: Address) -> PaymentRecord {
         read_payment(&env, bill_id, from)
     }
+}
+
+fn write_payment(
+    env: &Env,
+    bill_id: String,
+    from: Address,
+    amount: i128,
+    memo: String,
+) -> Result<BillSummary, Error> {
+    from.require_auth();
+
+    if amount <= 0 {
+        return Err(Error::AmountMustBePositive);
+    }
+
+    let bill_key = DataKey::Bill(bill_id.clone());
+    let payment_key = DataKey::Payment(bill_id.clone(), from.clone());
+    let mut summary = read_bill(env, bill_id.clone());
+    let mut payment = read_payment(env, bill_id, from);
+
+    if payment.amount == 0 {
+        summary.contributors += 1;
+    }
+
+    payment.amount += amount;
+    payment.memo = memo;
+    payment.updated_ledger = env.ledger().sequence();
+    summary.paid += amount;
+    summary.updated_ledger = env.ledger().sequence();
+
+    env.storage().persistent().set(&payment_key, &payment);
+    env.storage().persistent().set(&bill_key, &summary);
+
+    Ok(summary)
 }
 
 fn read_bill(env: &Env, bill_id: String) -> BillSummary {
@@ -145,11 +185,51 @@ extern crate std;
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Address, Env, String};
+    use soroban_sdk::{
+        contract, contractimpl, contracttype, testutils::Address as _, Address, Env, String,
+    };
+
+    #[contracttype]
+    #[derive(Clone)]
+    enum RewardKey {
+        Score(String, Address),
+    }
+
+    #[contract]
+    struct RewardAudit;
+
+    #[contractimpl]
+    impl RewardAudit {
+        pub fn award(env: Env, bill_id: String, from: Address, amount: i128) -> u32 {
+            let key = RewardKey::Score(bill_id.clone(), from.clone());
+            let current = env.storage().persistent().get(&key).unwrap_or(0_u32);
+            let earned = if amount >= 100 { amount / 100 } else { 1 } as u32;
+            let next = current + earned;
+
+            env.storage().persistent().set(&key, &next);
+            env.events()
+                .publish((symbol_short!("award"), bill_id, from), next);
+
+            next
+        }
+
+        pub fn score(env: Env, bill_id: String, from: Address) -> u32 {
+            env.storage()
+                .persistent()
+                .get(&RewardKey::Score(bill_id, from))
+                .unwrap_or(0_u32)
+        }
+    }
 
     fn client(env: &Env) -> SplitwaveBillsClient<'static> {
         let contract_id = env.register(SplitwaveBills, ());
         SplitwaveBillsClient::new(env, &contract_id)
+    }
+
+    fn reward_client(env: &Env) -> (Address, RewardAuditClient<'static>) {
+        let contract_id = env.register(RewardAudit, ());
+        let client = RewardAuditClient::new(env, &contract_id);
+        (contract_id, client)
     }
 
     fn bill_id(env: &Env) -> String {
@@ -346,5 +426,69 @@ mod test {
         assert_eq!(summary.contributors, 2);
         assert_eq!(client.contribution(&id, &ari).amount, 900);
         assert_eq!(client.contribution(&id, &mina).amount, 1_100);
+    }
+
+    #[test]
+    fn payment_with_rewards_calls_external_contract() {
+        let env = Env::default();
+        let client = client(&env);
+        let (rewards_id, rewards) = reward_client(&env);
+        let owner = Address::generate(&env);
+        let payer = Address::generate(&env);
+        let id = bill_id(&env);
+
+        client.mock_all_auths().upsert_bill(
+            &owner,
+            &id,
+            &String::from_str(&env, "Rewards bill"),
+            &2_500,
+        );
+
+        let summary = client.mock_all_auths().record_payment_with_rewards(
+            &id,
+            &payer,
+            &700,
+            &String::from_str(&env, "rewarded"),
+            &rewards_id,
+        );
+
+        assert_eq!(summary.paid, 700);
+        assert_eq!(summary.contributors, 1);
+        assert_eq!(rewards.score(&id, &payer), 7);
+    }
+
+    #[test]
+    fn rewards_contract_accumulates_cross_contract_points() {
+        let env = Env::default();
+        let client = client(&env);
+        let (rewards_id, rewards) = reward_client(&env);
+        let owner = Address::generate(&env);
+        let payer = Address::generate(&env);
+        let id = bill_id(&env);
+
+        client.mock_all_auths().upsert_bill(
+            &owner,
+            &id,
+            &String::from_str(&env, "Rewards bill"),
+            &2_500,
+        );
+        client.mock_all_auths().record_payment_with_rewards(
+            &id,
+            &payer,
+            &700,
+            &String::from_str(&env, "first"),
+            &rewards_id,
+        );
+        client.mock_all_auths().record_payment_with_rewards(
+            &id,
+            &payer,
+            &350,
+            &String::from_str(&env, "second"),
+            &rewards_id,
+        );
+
+        assert_eq!(client.summary(&id).paid, 1_050);
+        assert_eq!(client.summary(&id).contributors, 1);
+        assert_eq!(rewards.score(&id, &payer), 10);
     }
 }
