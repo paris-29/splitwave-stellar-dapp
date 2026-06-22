@@ -1,10 +1,21 @@
-# Splitwave Yellow Belt
+# Splitwave Orange Belt
 
-Splitwave turns daily bills into a Stellar testnet bill room. Level 2 adds a multi-wallet connect surface, a Soroban smart contract for bill progress, frontend contract calls, live event polling, and visible transaction stages.
+[![Build & Test](https://github.com/paris-29/splitwave-stellar-dapp/actions/workflows/build.yml/badge.svg)](https://github.com/paris-29/splitwave-stellar-dapp/actions/workflows/build.yml)
+
+Splitwave turns daily bills into a Stellar testnet bill room. Level 3 upgrades the Yellow Belt dApp with Soroban contract tests, React Query caching/loading states, optimistic contract-write UI updates, and a GitHub Actions build/test pipeline.
 
 Live: https://splitwave-stellar-dapp.pages.dev/
 
-## Level 2 Scope
+## Level 3 Scope
+
+- 8 automated Rust tests for the Soroban bill contract.
+- React Query contract-read cache in `src/hooks/useContractData.ts`.
+- Dashboard skeleton states for summary metrics and live events.
+- Optimistic cache updates for bill-goal and payment writes.
+- Stale-while-revalidate event cache with background refetch.
+- CI/CD workflow at `.github/workflows/build.yml` running `cargo test` and `npm run build`.
+
+## Yellow Belt Foundation
 
 - Multi-wallet UI backed by `src/stellar/walletKit.ts`, with Freighter as the working signer and optional `@creit.tech/stellar-wallets-kit` dynamic loading when that package is installed.
 - Error routes for wallet not found, rejected wallet requests, and insufficient testnet XLM.
@@ -24,15 +35,16 @@ npm run dev
 
 Open the Vite URL, connect Freighter on `TESTNET`, and use Friendbot from the wallet screen if the account has no testnet XLM.
 
-## Build
+## Build And Test
 
 ```bash
 npm run build
+cd contracts/splitwave_bills && cargo test
 ```
 
 ## Smart Contract
 
-The contract stores a bill summary and per-wallet payment records.
+The contract stores a bill summary and per-wallet payment records. The Orange Belt test module covers successful bill writes, payment recording, summary reads, contribution reads, invalid target/amount errors, repeated payments, and two-wallet contributions.
 
 ```bash
 contracts/splitwave_bills
@@ -46,6 +58,17 @@ Methods:
 - `record_payment(bill_id, from, amount, memo)` records a payment amount and emits a `pay` event.
 - `summary(bill_id)` reads current bill state.
 - `contribution(bill_id, from)` reads one wallet's contribution.
+
+Run contract tests:
+
+```bash
+cd contracts/splitwave_bills
+cargo test
+```
+
+## Frontend Caching
+
+Contract reads are wrapped with `@tanstack/react-query` hooks. Bill summaries and events use stable cache keys, visible skeletons while initial reads load, background refetching, and cached data remains visible while events revalidate.
 
 ## Deploy To Testnet
 
@@ -68,6 +91,7 @@ Restart `npm run dev` after changing env vars. The contract ID can also be paste
 ## Submission Fields
 
 - Public repo: `https://github.com/paris-29/splitwave-stellar-dapp`
+- CI workflow: `https://github.com/paris-29/splitwave-stellar-dapp/actions/workflows/build.yml`
 - Contract address: `CAOLLM2HMYVVFNKBFJBQNZ27I6OVANUJFX5JKVVFYVHUEO2KGDYVEBBW`
 - Contract deployment tx: `d0dcd222d991455156809a77892108d8c7bee7835e02effc1da2c6b13969c725`
 - Contract call tx: `60e78c05947b02a8fb80839a94a5e2123009a5a0af0ac761970714956a50185b`
