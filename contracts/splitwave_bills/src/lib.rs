@@ -64,8 +64,7 @@ impl SplitwaveBills {
         summary.updated_ledger = env.ledger().sequence();
 
         env.storage().persistent().set(&key, &summary);
-        env.events()
-            .publish((symbol_short!("bill"), id, owner), summary.target);
+        publish_bill_event(&env, id, owner, summary.target);
 
         Ok(summary)
     }
@@ -78,8 +77,7 @@ impl SplitwaveBills {
         memo: String,
     ) -> Result<BillSummary, Error> {
         let summary = write_payment(&env, bill_id.clone(), from.clone(), amount, memo)?;
-        env.events()
-            .publish((symbol_short!("pay"), bill_id, from), amount);
+        publish_payment_event(&env, bill_id, from, amount);
 
         Ok(summary)
     }
@@ -105,8 +103,7 @@ impl SplitwaveBills {
             ],
         );
 
-        env.events()
-            .publish((symbol_short!("xpay"), bill_id, from), amount);
+        publish_cross_payment_event(&env, bill_id, from, amount);
 
         Ok(summary)
     }
@@ -152,6 +149,24 @@ fn write_payment(
     env.storage().persistent().set(&bill_key, &summary);
 
     Ok(summary)
+}
+
+#[allow(deprecated)]
+fn publish_bill_event(env: &Env, id: String, owner: Address, target: i128) {
+    env.events()
+        .publish((symbol_short!("bill"), id, owner), target);
+}
+
+#[allow(deprecated)]
+fn publish_payment_event(env: &Env, bill_id: String, from: Address, amount: i128) {
+    env.events()
+        .publish((symbol_short!("pay"), bill_id, from), amount);
+}
+
+#[allow(deprecated)]
+fn publish_cross_payment_event(env: &Env, bill_id: String, from: Address, amount: i128) {
+    env.events()
+        .publish((symbol_short!("xpay"), bill_id, from), amount);
 }
 
 fn read_bill(env: &Env, bill_id: String) -> BillSummary {
@@ -200,6 +215,7 @@ mod test {
 
     #[contractimpl]
     impl RewardAudit {
+        #[allow(deprecated)]
         pub fn award(env: Env, bill_id: String, from: Address, amount: i128) -> u32 {
             let key = RewardKey::Score(bill_id.clone(), from.clone());
             let current = env.storage().persistent().get(&key).unwrap_or(0_u32);
